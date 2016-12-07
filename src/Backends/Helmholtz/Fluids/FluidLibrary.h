@@ -10,6 +10,8 @@
 #include <map>
 #include <algorithm>
 #include "Configuration.h"
+#include "Backends/Cubics/CubicsLibrary.h"
+#include "Helmholtz.h"
 
 namespace CoolProp{
 
@@ -29,12 +31,14 @@ class JSONFluidLibrary
     std::vector<std::string> name_vector;
     std::map<std::string, std::size_t> string_to_index_map;
     bool _is_empty;
-protected:
+public:
 
     /// Parse the contributions to the residual Helmholtz energy
-    void parse_alphar(rapidjson::Value &alphar, EquationOfState &EOS)
+    static ResidualHelmholtzContainer parse_alphar(rapidjson::Value &jsonalphar)
     {
-        for (rapidjson::Value::ValueIterator itr = alphar.Begin(); itr != alphar.End(); ++itr)
+        ResidualHelmholtzContainer alphar;
+        
+        for (rapidjson::Value::ValueIterator itr = jsonalphar.Begin(); itr != jsonalphar.End(); ++itr)
         {
             // A reference for code cleanness
             rapidjson::Value &contribution = *itr;
@@ -52,7 +56,7 @@ protected:
                 assert(n.size() == t.size());
                 assert(n.size() == l.size());
                 
-                EOS.alphar.GenExp.add_Power(n,d,t,l);
+                alphar.GenExp.add_Power(n,d,t,l);
             }
             else if (!type.compare("ResidualHelmholtzGaussian"))
             {
@@ -69,11 +73,11 @@ protected:
                 assert(n.size() == epsilon.size());
                 assert(n.size() == beta.size());
                 assert(n.size() == gamma.size());
-                EOS.alphar.GenExp.add_Gaussian(n,d,t,eta,epsilon,beta,gamma);
+                alphar.GenExp.add_Gaussian(n,d,t,eta,epsilon,beta,gamma);
             }
             else if (!type.compare("ResidualHelmholtzNonAnalytic"))
             {
-                if (EOS.alphar.NonAnalytic.N > 0){throw ValueError("Cannot add ");}
+                if (alphar.NonAnalytic.N > 0){throw ValueError("Cannot add ");}
                 std::vector<CoolPropDbl> n = cpjson::get_long_double_array(contribution["n"]);
                 std::vector<CoolPropDbl> a = cpjson::get_long_double_array(contribution["a"]);
                 std::vector<CoolPropDbl> b = cpjson::get_long_double_array(contribution["b"]);
@@ -89,7 +93,7 @@ protected:
                 assert(n.size() == B.size());
                 assert(n.size() == C.size());
                 assert(n.size() == D.size());
-                EOS.alphar.NonAnalytic = ResidualHelmholtzNonAnalytic(n,a,b,beta,A,B,C,D);
+                alphar.NonAnalytic = ResidualHelmholtzNonAnalytic(n,a,b,beta,A,B,C,D);
             }
             else if (!type.compare("ResidualHelmholtzLemmon2005"))
             {
@@ -102,7 +106,7 @@ protected:
                 assert(n.size() == t.size());
                 assert(n.size() == l.size());
                 assert(n.size() == m.size());
-                EOS.alphar.GenExp.add_Lemmon2005(n,d,t,l,m);
+                alphar.GenExp.add_Lemmon2005(n,d,t,l,m);
             }
             else if (!type.compare("ResidualHelmholtzExponential"))
             {
@@ -115,17 +119,17 @@ protected:
                 assert(n.size() == t.size());
                 assert(n.size() == g.size());
                 assert(n.size() == l.size());
-                EOS.alphar.GenExp.add_Exponential(n,d,t,g,l);
+                alphar.GenExp.add_Exponential(n,d,t,g,l);
             }
             else if (!type.compare("ResidualHelmholtzAssociating"))
             {
-                if (EOS.alphar.SAFT.disabled == false){throw ValueError("Cannot add ");}
+                if (alphar.SAFT.disabled == false){throw ValueError("Cannot add ");}
                 CoolPropDbl a = cpjson::get_double(contribution,"a");
                 CoolPropDbl m = cpjson::get_double(contribution,"m");
                 CoolPropDbl epsilonbar = cpjson::get_double(contribution,"epsilonbar");
                 CoolPropDbl vbarn = cpjson::get_double(contribution,"vbarn");
                 CoolPropDbl kappabar = cpjson::get_double(contribution,"kappabar");
-                EOS.alphar.SAFT = ResidualHelmholtzSAFTAssociating(a,m,epsilonbar,vbarn,kappabar);
+                alphar.SAFT = ResidualHelmholtzSAFTAssociating(a,m,epsilonbar,vbarn,kappabar);
             }
             else
             {
@@ -134,43 +138,48 @@ protected:
         }
         
         // Finish adding parts to the Generalized Exponential term, build other vectors
-        EOS.alphar.GenExp.finish();
+        alphar.GenExp.finish();
+        
+        return alphar;
     };
 
     /// Parse the contributions to the ideal-gas Helmholtz energy
-    void parse_alpha0(rapidjson::Value &alpha0, EquationOfState &EOS)
+    static IdealHelmholtzContainer parse_alpha0(rapidjson::Value &jsonalpha0)
     {
-        if (!alpha0.IsArray()){throw ValueError();}
-        for (rapidjson::Value::ValueIterator itr = alpha0.Begin(); itr != alpha0.End(); ++itr)
+        if (!jsonalpha0.IsArray()){throw ValueError();}
+        
+        IdealHelmholtzContainer alpha0;
+        
+        for (rapidjson::Value::ConstValueIterator itr = jsonalpha0.Begin(); itr != jsonalpha0.End(); ++itr)
         {
             // A reference for code cleanness
-            rapidjson::Value &contribution = *itr;
+            const rapidjson::Value &contribution = *itr;
 
             // Get the type (required!)
             std::string type = contribution["type"].GetString();
 
             if (!type.compare("IdealGasHelmholtzLead"))
             {
-                if (EOS.alpha0.Lead.is_enabled() == true){throw ValueError("Cannot add ");}
+                if (alpha0.Lead.is_enabled() == true){throw ValueError("Cannot add ");}
                 CoolPropDbl a1 = cpjson::get_double(contribution,"a1");
                 CoolPropDbl a2 = cpjson::get_double(contribution,"a2");
                 
-                EOS.alpha0.Lead = IdealHelmholtzLead(a1, a2);
+                alpha0.Lead = IdealHelmholtzLead(a1, a2);
             }
             else if (!type.compare("IdealGasHelmholtzPower"))
             {
-                if (EOS.alpha0.Power.is_enabled() == true){throw ValueError("Cannot add ");}
+                if (alpha0.Power.is_enabled() == true){throw ValueError("Cannot add ");}
                 std::vector<CoolPropDbl> n = cpjson::get_long_double_array(contribution["n"]);
                 std::vector<CoolPropDbl> t = cpjson::get_long_double_array(contribution["t"]);
                 
-                EOS.alpha0.Power = IdealHelmholtzPower(n, t);
+                alpha0.Power = IdealHelmholtzPower(n, t);
             }
             else if (!type.compare("IdealGasHelmholtzLogTau"))
             {
-                if (EOS.alpha0.LogTau.is_enabled() == true){throw ValueError("Cannot add ");}
+                if (alpha0.LogTau.is_enabled() == true){throw ValueError("Cannot add ");}
                 CoolPropDbl a = cpjson::get_double(contribution,"a");
                 
-                EOS.alpha0.LogTau = IdealHelmholtzLogTau(a);
+                alpha0.LogTau = IdealHelmholtzLogTau(a);
             }
             else if (!type.compare("IdealGasHelmholtzPlanckEinsteinGeneralized"))
             {
@@ -181,11 +190,11 @@ protected:
                 std::vector<CoolPropDbl> c = cpjson::get_long_double_array(contribution["c"]);
                 std::vector<CoolPropDbl> d = cpjson::get_long_double_array(contribution["d"]);
                 
-                if (EOS.alpha0.PlanckEinstein.is_enabled() == true){
-                    EOS.alpha0.PlanckEinstein.extend(n, t, c, d);
+                if (alpha0.PlanckEinstein.is_enabled() == true){
+                    alpha0.PlanckEinstein.extend(n, t, c, d);
                 }
                 else{
-                    EOS.alpha0.PlanckEinstein = IdealHelmholtzPlanckEinsteinGeneralized(n, t, c, d);
+                    alpha0.PlanckEinstein = IdealHelmholtzPlanckEinsteinGeneralized(n, t, c, d);
                 }
             }
             else if (!type.compare("IdealGasHelmholtzPlanckEinstein"))
@@ -198,29 +207,29 @@ protected:
                 std::vector<CoolPropDbl> c(n.size(), 1);
                 std::vector<CoolPropDbl> d(c.size(), -1);
                 
-                if (EOS.alpha0.PlanckEinstein.is_enabled() == true){
-                    EOS.alpha0.PlanckEinstein.extend(n, t, c, d);
+                if (alpha0.PlanckEinstein.is_enabled() == true){
+                    alpha0.PlanckEinstein.extend(n, t, c, d);
                 }
                 else{
-                    EOS.alpha0.PlanckEinstein = IdealHelmholtzPlanckEinsteinGeneralized(n, t, c, d);
+                    alpha0.PlanckEinstein = IdealHelmholtzPlanckEinsteinGeneralized(n, t, c, d);
                 }
             }
             else if (!type.compare("IdealGasHelmholtzCP0Constant"))
             {
-                if (EOS.alpha0.CP0Constant.is_enabled() == true){throw ValueError("Cannot add ");}
+                if (alpha0.CP0Constant.is_enabled() == true){throw ValueError("Cannot add another IdealGasHelmholtzCP0Constant term; join them together");}
                 CoolPropDbl cp_over_R = cpjson::get_double(contribution, "cp_over_R");
                 CoolPropDbl Tc = cpjson::get_double(contribution, "Tc");
                 CoolPropDbl T0 = cpjson::get_double(contribution, "T0");
-                EOS.alpha0.CP0Constant = IdealHelmholtzCP0Constant(cp_over_R, Tc, T0);
+                alpha0.CP0Constant = IdealHelmholtzCP0Constant(cp_over_R, Tc, T0);
             }
             else if (!type.compare("IdealGasHelmholtzCP0PolyT"))
             {
-                if (EOS.alpha0.CP0PolyT.is_enabled() == true){throw ValueError("Cannot add ");}
+                if (alpha0.CP0PolyT.is_enabled() == true){throw ValueError("Cannot add another CP0PolyT term; join them together");}
                 std::vector<CoolPropDbl> c = cpjson::get_long_double_array(contribution["c"]);
                 std::vector<CoolPropDbl> t = cpjson::get_long_double_array(contribution["t"]);
                 CoolPropDbl Tc = cpjson::get_double(contribution, "Tc");
                 CoolPropDbl T0 = cpjson::get_double(contribution, "T0");
-                EOS.alpha0.CP0PolyT = IdealHelmholtzCP0PolyT(c, t, Tc, T0);
+                alpha0.CP0PolyT = IdealHelmholtzCP0PolyT(c, t, Tc, T0);
             }
             else if (!type.compare("IdealGasHelmholtzCP0AlyLee"))
             {
@@ -232,11 +241,11 @@ protected:
                 // Take the constant term if nonzero and set it as a polyT term
                 if (std::abs(constants[0]) > 1e-14){
                     std::vector<CoolPropDbl> c(1,constants[0]), t(1,0);
-                    if (EOS.alpha0.CP0PolyT.is_enabled() == true){
-                        EOS.alpha0.CP0PolyT.extend(c,t);
+                    if (alpha0.CP0PolyT.is_enabled() == true){
+                        alpha0.CP0PolyT.extend(c,t);
                     }
                     else{
-                        EOS.alpha0.CP0PolyT = IdealHelmholtzCP0PolyT(c, t, Tc, T0);
+                        alpha0.CP0PolyT = IdealHelmholtzCP0PolyT(c, t, Tc, T0);
                     }
                 }
                 std::vector<CoolPropDbl> n, c, d, t;
@@ -254,11 +263,11 @@ protected:
                     c.push_back(1);
                     d.push_back(1);
                 }
-                if (EOS.alpha0.PlanckEinstein.is_enabled() == true){
-                    EOS.alpha0.PlanckEinstein.extend(n, t, c, d);
+                if (alpha0.PlanckEinstein.is_enabled() == true){
+                    alpha0.PlanckEinstein.extend(n, t, c, d);
                 }
                 else{
-                    EOS.alpha0.PlanckEinstein = IdealHelmholtzPlanckEinsteinGeneralized(n, t, c, d);
+                    alpha0.PlanckEinstein = IdealHelmholtzPlanckEinsteinGeneralized(n, t, c, d);
                 }
             }
             else if (!type.compare("IdealGasHelmholtzEnthalpyEntropyOffset"))
@@ -266,7 +275,7 @@ protected:
                 CoolPropDbl a1 = cpjson::get_double(contribution, "a1");
                 CoolPropDbl a2 = cpjson::get_double(contribution, "a2");
                 std::string reference = cpjson::get_string(contribution, "reference");
-                EOS.alpha0.EnthalpyEntropyOffsetCore = IdealHelmholtzEnthalpyEntropyOffset(a1, a2, reference);
+                alpha0.EnthalpyEntropyOffsetCore = IdealHelmholtzEnthalpyEntropyOffset(a1, a2, reference);
             }
             else
             {
@@ -274,8 +283,9 @@ protected:
                 //throw ValueError(format("Unsupported ideal-gas Helmholtz type: %s",type.c_str()));
             }
         }
+        return alpha0;
     };
-
+protected:
     /// Parse the environmental parameters (ODP, GWP, etc.)
     void parse_environmental(rapidjson::Value &json, CoolPropFluid &fluid)
     {
@@ -333,8 +343,8 @@ protected:
         EOS.BibTeX_EOS = cpjson::get_string(EOS_json,"BibTeX_EOS");
         EOS.BibTeX_CP0 = cpjson::get_string(EOS_json,"BibTeX_CP0");
 
-        parse_alphar(EOS_json["alphar"], EOS);
-        parse_alpha0(EOS_json["alpha0"], EOS);
+        EOS.alphar = parse_alphar(EOS_json["alphar"]);
+        EOS.alpha0 = parse_alpha0(EOS_json["alpha0"]);
         
         if (EOS_json["STATES"].HasMember("hs_anchor")){
             rapidjson::Value &hs_anchor = EOS_json["STATES"]["hs_anchor"];
@@ -1145,153 +1155,14 @@ public:
         _is_empty = true;
     };
     bool is_empty(void){ return _is_empty;};
+    
+    /// Add all the fluid entries in the JSON-encoded string passed in
+    static void add_many(const std::string &JSON_string);
 
     /// Add all the fluid entries in the rapidjson::Value instance passed in
-    void add_many(rapidjson::Value &listing)
-    {
-        for (rapidjson::Value::ValueIterator itr = listing.Begin(); itr != listing.End(); ++itr)
-        {
-            add_one(*itr);
-        }
-    };
-    void add_one(rapidjson::Value &fluid_json)
-    {
-        _is_empty = false;
-
-        // Get the next index for this fluid
-        std::size_t index = fluid_map.size();
-
-        // Add index->fluid mapping
-        fluid_map[index] = CoolPropFluid();
-
-        // Create an instance of the fluid
-        CoolPropFluid &fluid = fluid_map[index];
-
-        // Fluid name
-        fluid.name = fluid_json["INFO"]["NAME"].GetString(); name_vector.push_back(fluid.name);
-
-        try{
-            // CAS number
-            if (!fluid_json["INFO"].HasMember("CAS")){ throw ValueError(format("fluid [%s] does not have \"CAS\" member",fluid.name.c_str())); }
-            fluid.CAS = fluid_json["INFO"]["CAS"].GetString();
-            
-            // REFPROP alias
-            if (!fluid_json["INFO"].HasMember("REFPROP_NAME")){ throw ValueError(format("fluid [%s] does not have \"REFPROP_NAME\" member",fluid.name.c_str())); }
-            fluid.REFPROPname = fluid_json["INFO"]["REFPROP_NAME"].GetString();
-
-            if (fluid_json["INFO"].HasMember("FORMULA")){
-                fluid.formula = cpjson::get_string(fluid_json["INFO"], "FORMULA");
-            }
-            else{ fluid.formula = "N/A"; }
-            
-            if (fluid_json["INFO"].HasMember("INCHI_STRING")){
-                fluid.InChI = cpjson::get_string(fluid_json["INFO"], "INCHI_STRING");
-            }
-            else{ fluid.InChI = "N/A"; }
-            
-            if (fluid_json["INFO"].HasMember("INCHI_KEY")){
-                fluid.InChIKey = cpjson::get_string(fluid_json["INFO"], "INCHI_KEY");
-            }
-            else{ fluid.InChIKey = "N/A"; }
-            
-            if (fluid_json["INFO"].HasMember("SMILES")){
-                fluid.smiles = cpjson::get_string(fluid_json["INFO"], "SMILES");
-            }
-            else{ fluid.smiles = "N/A"; }
-            
-            if (fluid_json["INFO"].HasMember("CHEMSPIDER_ID")){
-                fluid.ChemSpider_id = cpjson::get_integer(fluid_json["INFO"], "CHEMSPIDER_ID");
-            }
-            else{ fluid.ChemSpider_id = -1; }
-            
-            if (fluid_json["INFO"].HasMember("2DPNG_URL")){
-                fluid.TwoDPNG_URL = cpjson::get_string(fluid_json["INFO"], "2DPNG_URL");
-            }
-            else{ fluid.TwoDPNG_URL = "N/A"; }
-            
-            // Parse the environmental parameters
-            if (!(fluid_json["INFO"].HasMember("ENVIRONMENTAL"))){
-                if (get_debug_level() > 0){
-                    std::cout << format("Environmental data are missing for fluid [%s]\n", fluid.name.c_str()) ;
-                }
-            }
-            else{
-                parse_environmental(fluid_json["INFO"]["ENVIRONMENTAL"], fluid);
-            }
-            
-            // Aliases
-            fluid.aliases = cpjson::get_string_array(fluid_json["INFO"]["ALIASES"]);
-            
-            // Critical state
-            if (!fluid_json.HasMember("STATES")){ throw ValueError(format("fluid [%s] does not have \"STATES\" member",fluid.name.c_str())); }
-            parse_states(fluid_json["STATES"], fluid);
-
-            if (get_debug_level() > 5){
-                std::cout << format("Loading fluid %s with CAS %s; %d fluids loaded\n", fluid.name.c_str(), fluid.CAS.c_str(), index);
-            }
-
-            // EOS
-            parse_EOS_listing(fluid_json["EOS"], fluid);
-
-            // Validate the fluid
-            validate(fluid);
-
-            // Ancillaries for saturation
-            if (!fluid_json.HasMember("ANCILLARIES")){throw ValueError(format("Ancillary curves are missing for fluid [%s]",fluid.name.c_str()));};
-            parse_ancillaries(fluid_json["ANCILLARIES"],fluid);
-
-            // Surface tension
-            if (!(fluid_json["ANCILLARIES"].HasMember("surface_tension"))){
-                if (get_debug_level() > 0){
-                    std::cout << format("Surface tension curves are missing for fluid [%s]\n", fluid.name.c_str()) ;
-                }
-            }
-            else{
-                parse_surface_tension(fluid_json["ANCILLARIES"]["surface_tension"], fluid);
-            }
-
-            // Melting line
-            if (!(fluid_json["ANCILLARIES"].HasMember("melting_line"))){
-                if (get_debug_level() > 0){
-                    std::cout << format("Melting line curves are missing for fluid [%s]\n", fluid.name.c_str()) ;
-                }
-            }
-            else{
-                parse_melting_line(fluid_json["ANCILLARIES"]["melting_line"], fluid);
-            }
-
-            // Parse the environmental parameters
-            if (!(fluid_json.HasMember("TRANSPORT"))){
-                default_transport(fluid);
-            }
-            else{
-                parse_transport(fluid_json["TRANSPORT"], fluid);
-            }
-
-            // If the fluid is ok...
-
-            // Add CAS->index mapping
-            string_to_index_map[fluid.CAS] = index;
-
-            // Add name->index mapping
-            string_to_index_map[fluid.name] = index;
-
-            // Add the aliases
-            for (std::size_t i = 0; i < fluid.aliases.size(); ++i)
-            {
-                string_to_index_map[fluid.aliases[i]] = index;
-                
-                // Add uppercase alias for EES compatibility
-                string_to_index_map[upper(fluid.aliases[i])] = index;
-            }
-
-            if (get_debug_level() > 5){ std::cout << format("Loaded.\n"); }
-
-        }
-        catch (const std::exception &e){
-            throw ValueError(format("Unable to load fluid [%s] due to error: %s",fluid.name.c_str(),e.what()));
-        }
-    };
+    void add_many(rapidjson::Value &listing);
+    
+    void add_one(rapidjson::Value &fluid_json);
     /// Get a CoolPropFluid instance stored in this library
     /**
     @param key Either a CAS number or the name (CAS number should be preferred)
@@ -1305,22 +1176,83 @@ public:
             return get(it->second);
         }
         else{
-            if (endswith(key, "-SRK")){
-                std::string used_name = strsplit(key, '-')[0];
-                it = string_to_index_map.find(used_name);
-                if (it != string_to_index_map.end()){
-                    CoolPropFluid fluid = get(it->second);
-                    // Remove all the residual contributions to the Helmholtz energy
-                    fluid.EOSVector[0].alphar.empty_the_EOS();
-                    // Get the parameters for the cubic EOS
-                    CoolPropDbl Tc = fluid.EOSVector[0].reduce.T;
-                    CoolPropDbl pc = fluid.EOSVector[0].reduce.p;
-                    CoolPropDbl rhomolarc = fluid.EOSVector[0].reduce.rhomolar;
-                    CoolPropDbl acentric = fluid.EOSVector[0].acentric;
-                    CoolPropDbl R = 8.3144598; // fluid.EOSVector[0].R_u;
-                    // Set the SRK contribution
-                    fluid.EOSVector[0].alphar.SRK = ResidualHelmholtzSRK(Tc, pc, rhomolarc, acentric, R);
-                    return fluid;
+            // Here we check for the use of a cubic Helmholtz energy transformation for a multi-fluid model
+            std::vector<std::string> endings; endings.push_back("-SRK"); endings.push_back("-PengRobinson");
+            for (std::vector<std::string>::const_iterator end = endings.begin(); end != endings.end(); ++end){
+                if (endswith(key, *end)){
+                    std::string used_name = key.substr(0, key.size()-(*end).size());
+                    it = string_to_index_map.find(used_name);
+                    if (it != string_to_index_map.end()){
+                        // We found the name of the fluid within the library of multiparameter 
+                        // Helmholtz-explicit models.  We will load its parameters from the 
+                        // multiparameter EOS
+                        //
+                        CoolPropFluid fluid = get(it->second);
+                        // Remove all the residual contributions to the Helmholtz energy
+                        fluid.EOSVector[0].alphar.empty_the_EOS();
+                        // Get the parameters for the cubic EOS
+                        CoolPropDbl Tc = fluid.EOSVector[0].reduce.T;
+                        CoolPropDbl pc = fluid.EOSVector[0].reduce.p;
+                        CoolPropDbl rhomolarc = fluid.EOSVector[0].reduce.rhomolar;
+                        CoolPropDbl acentric = fluid.EOSVector[0].acentric;
+                        CoolPropDbl R = 8.3144598; // fluid.EOSVector[0].R_u;
+                        // Set the cubic contribution to the residual Helmholtz energy
+                        shared_ptr<AbstractCubic> ac;
+                        if (*end == "-SRK"){
+                            ac.reset(new SRK(Tc, pc, acentric, R));
+                        }
+                        else if (*end == "-PengRobinson"){
+                            ac.reset(new PengRobinson(Tc, pc, acentric, R));
+                        }
+                        else {
+                            throw CoolProp::ValueError(format("Unable to match this ending [%s]", (*end).c_str()));
+                        }
+                        ac->set_Tr(Tc);
+                        ac->set_rhor(rhomolarc);
+                        fluid.EOSVector[0].alphar.cubic = ResidualHelmholtzGeneralizedCubic(ac);
+                        return fluid;
+                    }
+                    else{
+                        // Let's look in the library of cubic EOS
+                        CubicLibrary::CubicsValues vals = CubicLibrary::get_cubic_values(used_name);
+                        // Set the cubic contribution to the residual Helmholtz energy
+                        shared_ptr<AbstractCubic> ac;
+                        if (*end == "-SRK") {
+                            ac.reset(new SRK(vals.Tc, vals.pc, vals.acentric, get_config_double(R_U_CODATA)));
+                        }
+                        else if (*end == "-PengRobinson") {
+                            ac.reset(new PengRobinson(vals.Tc, vals.pc, vals.acentric, get_config_double(R_U_CODATA)));
+                        }
+                        else{
+                            throw CoolProp::ValueError(format("Unable to match this ending [%s]",(*end).c_str()));
+                        }
+                        ac->set_Tr(vals.Tc);
+                        if (vals.rhomolarc > 0){
+                            ac->set_rhor(vals.rhomolarc);
+                        }
+                        else{
+                            // Curve fit from all the pure fluids in CoolProp (thanks to recommendation of A. Kazakov)
+                            double v_c_Lmol = 2.14107171795*(vals.Tc/vals.pc*1000)+0.00773144012514; // [L/mol]
+                            ac->set_rhor(1/(v_c_Lmol/1000.0));
+                        }
+                        CoolPropFluid fluid;
+                        fluid.CAS = vals.CAS;
+                        EquationOfState E;
+                        E.acentric = vals.acentric;
+                        E.sat_min_liquid.T = _HUGE;
+                        E.sat_min_liquid.p = _HUGE;
+                        E.reduce.T = vals.Tc;
+                        E.reduce.p = vals.pc;
+                        E.reduce.rhomolar = ac->get_rhor();
+                        fluid.EOSVector.push_back(E);
+                        fluid.EOS().alphar.cubic = ResidualHelmholtzGeneralizedCubic(ac);
+                        fluid.EOS().alpha0 = vals.alpha0;
+                        fluid.crit.T = vals.Tc;
+                        fluid.crit.p = vals.pc;
+                        fluid.crit.rhomolar = ac->get_rhor();
+
+                        return fluid;
+                    }
                 }
             }
             throw ValueError(format("key [%s] was not found in string_to_index_map in JSONFluidLibrary", key.c_str()));

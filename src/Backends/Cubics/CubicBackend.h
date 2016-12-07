@@ -38,8 +38,16 @@ public:
 	/// Set the pointer to the residual helmholtz class, etc.
 	void setup(bool generate_SatL_and_SatV = true);
 
+    /// Set the alpha function based on the alpha function defined in the components vector;
+    void set_alpha_from_components();
+    
+    /// Set the non-dimensionalized Helmholtz energy based on the fluids defined in the components vector
+    void set_alpha0_from_components();
+
 	/// Get a reference to the shared pointer managing the generalized cubic class
 	shared_ptr<AbstractCubic> &get_cubic(){ return cubic; };
+
+    std::vector<std::string> calc_fluid_names(void);
 	
     bool using_mole_fractions(void){return true;};
     bool using_mass_fractions(void){return false;}; 
@@ -55,8 +63,11 @@ public:
             case iT_critical: return cubic->get_Tc()[i];
             case iacentric_factor: return cubic->get_acentric()[i];
             case imolar_mass: return components[i].molemass;
+            case iT_triple: return HelmholtzEOSMixtureBackend::get_components()[i].EOS().sat_min_liquid.T; // From the base class data structure
+            case iP_triple: return HelmholtzEOSMixtureBackend::get_components()[i].EOS().sat_min_liquid.p; // From the base class data structure
+            case irhomolar_critical: return components[i].rhomolarc;
             default:
-                throw ValueError(format("I don't know what to do with this fluid constant: %s", get_parameter_information(param,"short")));
+                throw ValueError(format("I don't know what to do with this fluid constant: %s", get_parameter_information(param,"short").c_str()));
         }
     }
 
@@ -66,12 +77,12 @@ public:
 	SimpleState calc_reducing_state_nocache(const std::vector<CoolPropDbl> & mole_fractions)
 	{
 		SimpleState reducing;
-		reducing.T = cubic->T_r;
-		reducing.rhomolar = cubic->rho_r;
+		reducing.T = cubic->get_Tr();
+		reducing.rhomolar = cubic->get_rhor();
 		return reducing;
 	};
-    CoolPropDbl calc_reduced_density(void) { return _rhomolar/get_cubic()->rho_r; };
-    CoolPropDbl calc_reciprocal_reduced_temperature(void) { return get_cubic()->T_r/_T; };
+    CoolPropDbl calc_reduced_density(void) { return _rhomolar/get_cubic()->get_rhor(); };
+    CoolPropDbl calc_reciprocal_reduced_temperature(void) { return get_cubic()->get_Tr()/_T; };
     std::vector<double> spinodal_densities();
     
     CoolPropDbl calc_T_critical(void){
@@ -182,15 +193,18 @@ public:
     
     // Copy the entire kij matrix from another instance in one shot
     void copy_k(AbstractCubicBackend *donor);
-
-    // Set the Mathias-Copeman constants c1,c2,c3 for a pure fluid
-    void set_C_MC(double c1, double c2, double c3);
     
-    // Set the Twu constants L,M,N for a pure fluid
-    void set_C_Twu(double L, double M, double N);
+    //
+    void copy_all_alpha_functions(AbstractCubicBackend *donor);
+    
+    /// Copy the internals from another class into this one (kij, alpha functions, cp0 functions, etc.)
+    void copy_internals(AbstractCubicBackend &donor);
+    
+    // Set the cubic alpha function's constants:
+    void set_cubic_alpha_C(const size_t i, const std::string &parameter, const double c1, const double c2, const double c3);
 
-	// Set fluid parameter (currently the volume translation parameter)
-	void set_fluid_parameter_double(const size_t i, const std::string parameter, const double value);
+    // Set fluid parameter (currently the volume translation parameter)
+    void set_fluid_parameter_double(const size_t i, const std::string &parameter, const double value);
     
 };
 
@@ -231,7 +245,7 @@ public:
     }
     HelmholtzEOSMixtureBackend *get_copy(bool generate_SatL_and_SatV = true){
         AbstractCubicBackend *ACB = new SRKBackend(cubic->get_Tc(),cubic->get_pc(),cubic->get_acentric(),cubic->get_R_u(),generate_SatL_and_SatV);
-        ACB->copy_k(this);
+        ACB->copy_internals(*this);
         return static_cast<HelmholtzEOSMixtureBackend *>(ACB);
     }
     std::string backend_name(void) { return get_backend_string(SRK_BACKEND); }
@@ -240,6 +254,7 @@ public:
 class PengRobinsonBackend : public AbstractCubicBackend  {
 
 public:
+    PengRobinsonBackend(){}; // Default constructor (make sure you know what you are doing)
 	PengRobinsonBackend(const std::vector<double> &Tc, 
 		       const std::vector<double> &pc, 
 		       const std::vector<double> &acentric,
@@ -273,7 +288,7 @@ public:
     };
     HelmholtzEOSMixtureBackend * get_copy(bool generate_SatL_and_SatV = true){
         AbstractCubicBackend * ACB = new PengRobinsonBackend(cubic->get_Tc(),cubic->get_pc(),cubic->get_acentric(),cubic->get_R_u(),generate_SatL_and_SatV);
-        ACB->copy_k(this);
+        ACB->copy_internals(*this);
         return static_cast<HelmholtzEOSMixtureBackend *>(ACB);
     }
     std::string backend_name(void) { return get_backend_string(PR_BACKEND); }

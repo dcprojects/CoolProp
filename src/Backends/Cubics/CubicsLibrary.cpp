@@ -6,6 +6,8 @@
 #include "rapidjson_include.h"
 #include "CPstrings.h"
 #include "CoolProp.h"
+#include "Configuration.h"
+#include "Backends/Helmholtz/Fluids/FluidLibrary.h"
 
 namespace CoolProp{
 namespace CubicLibrary{
@@ -33,7 +35,29 @@ public:
             val.molemass = cpjson::get_double(*itr, "molemass");
             val.name = cpjson::get_string(*itr, "name");
             val.aliases = cpjson::get_string_array(*itr, "aliases");
-            fluid_map.insert(std::pair<std::string, CubicsValues>(val.name, val) );
+            val.CAS = cpjson::get_string(*itr, "CAS");
+            if (itr->HasMember("rhomolarc") && (*itr)["rhomolarc"].IsNumber()){
+                val.rhomolarc = cpjson::get_double(*itr, "rhomolarc");
+            }
+            if (itr->HasMember("alpha") && (*itr)["alpha"].IsObject()){
+                rapidjson::Value &alpha = (*itr)["alpha"];
+                val.alpha_type = cpjson::get_string(alpha, "type");
+                val.alpha_coeffs = cpjson::get_double_array(alpha, "c");
+            }
+            else{
+                val.alpha_type = "default";
+            }
+            if (itr->HasMember("alpha0") && (*itr)["alpha0"].IsArray()){
+                val.alpha0 = JSONFluidLibrary::parse_alpha0((*itr)["alpha0"]);
+            }
+            std::pair<std::map<std::string, CubicsValues>::iterator, bool> ret;
+            ret = fluid_map.insert(std::pair<std::string, CubicsValues>(val.name, val) );
+            if (ret.second == false && get_config_bool(OVERWRITE_FLUIDS)) {
+                // Already there, see http://www.cplusplus.com/reference/map/map/insert/
+                fluid_map.erase(ret.first);
+                ret = fluid_map.insert(std::pair<std::string, CubicsValues>(val.name, val));
+                assert(ret.second == true);
+            }
 
             for (std::vector<std::string>::const_iterator it = val.aliases.begin(); it != val.aliases.end(); ++it){
                 if (aliases_map.find(*it) == aliases_map.end()){

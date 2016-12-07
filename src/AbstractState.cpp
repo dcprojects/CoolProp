@@ -164,10 +164,10 @@ bool AbstractState::clear() {
     this->_umolar_excess.clear();
     this->_helmholtzmolar_excess.clear();
 
-    ///// Smoothing values
-    //this->rhospline = -_HUGE;
-    //this->dsplinedp = -_HUGE;
-    //this->dsplinedh = -_HUGE;
+    /// Smoothing values
+	this->_rho_spline.clear();
+	this->_drho_spline_dh__constp.clear();
+	this->_drho_spline_dp__consth.clear();
 
     /// Cached low-level elements for in-place calculation of other properties
     this->_alpha0.clear();
@@ -954,50 +954,6 @@ TEST_CASE("Check derivatives in first_partial_deriv","[derivs_in_first_partial_d
     CHECK( std::abs(dGmolar_drho_analyt/dGmolar_drho_num-1) < eps);
     CHECK( std::abs(dGmass_dT_analyt/dGmass_dT_num-1) < eps);
     CHECK( std::abs(dGmass_drho_analyt/dGmass_drho_num-1) < eps);
-
-}
-
-#endif
-
-
-/// *********************************************************************************
-/// *********************************************************************************
-///                     EMSCRIPTEN (for javascript)
-/// *********************************************************************************
-/// *********************************************************************************
-
-#ifdef EMSCRIPTEN
-
-#include <emscripten/bind.h>
-using namespace emscripten;
-
-CoolProp::AbstractState * factory(const std::string &backend, const std::string &fluid_names)
-{
-    return CoolProp::AbstractState::factory(backend, strsplit(fluid_names, '&'));
-}
-
-// Binding code
-EMSCRIPTEN_BINDINGS(abstract_state_bindings) {
-
-    register_vector<double>("VectorDouble");
-    register_vector<std::string>("VectorString");
-
-    //value_object<CoolProp::PhaseEnvelopeData>("CoolProp::PhaseEnvelopeData")
-    //    // Use X macros to auto-generate the variables; 
-    //    // each will look something like: .field("T", &CoolProp::PhaseEnvelopeData::T);
-    //    #define X(name) .field("name", &CoolProp::PhaseEnvelopeData::name)
-    //        PHASE_ENVELOPE_VECTORS
-    //    #undef X
-    //    ;
-
-    function("factory", &factory, allow_raw_pointers());
-
-    class_<CoolProp::AbstractState>("AbstractState")
-        .function("gas_constant", &CoolProp::AbstractState::gas_constant)
-        .function("update", &CoolProp::AbstractState::update)
-        .function("set_mole_fractions", &CoolProp::AbstractState::set_mole_fractions_double)
-        .function("build_phase_envelope", &CoolProp::AbstractState::build_phase_envelope)
-        .function("get_phase_envelope_data", &CoolProp::AbstractState::get_phase_envelope_data);
 
 }
 

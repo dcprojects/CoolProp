@@ -292,6 +292,19 @@ double HelmholtzEOSMixtureBackend::get_binary_interaction_double(const std::size
 //std::string HelmholtzEOSMixtureBackend::get_binary_interaction_string(const std::string &CAS1, const std::string &CAS2, const std::string &parameter){
 //    return CoolProp::get_mixture_binary_pair_data(CAS1, CAS2, parameter);
 //}
+/// Set binary mixture floating point parameter for this instance
+void HelmholtzEOSMixtureBackend::set_binary_interaction_string(const std::size_t i, const std::size_t j, const std::string &parameter, const std::string & value){
+    if (parameter == "function"){
+        residual_helmholtz->Excess.DepartureFunctionMatrix[i][j].reset(get_departure_function(value));
+    }
+    else{
+        throw ValueError(format("Cannot process this string parameter [%s] in set_binary_interaction_string", parameter.c_str()));
+    }
+    /// Also set the parameters in the managed pointers for other states
+    for (std::vector<shared_ptr<HelmholtzEOSMixtureBackend> >::iterator it = linked_states.begin(); it != linked_states.end(); ++it){
+        it->get()->set_binary_interaction_string(i, j, parameter, value);
+    }
+};
     
 void HelmholtzEOSMixtureBackend::calc_change_EOS(const std::size_t i, const std::string &EOS_name){
 
@@ -299,7 +312,7 @@ void HelmholtzEOSMixtureBackend::calc_change_EOS(const std::size_t i, const std:
         CoolPropFluid &fluid = components[i];
         EquationOfState &EOS = fluid.EOSVector[0];
 
-        if (EOS_name == "SRK"){
+        if (EOS_name == "SRK" || EOS_name == "Peng-Robinson"){
 
             // Get the parameters for the cubic EOS
             CoolPropDbl Tc = EOS.reduce.T;
@@ -310,8 +323,17 @@ void HelmholtzEOSMixtureBackend::calc_change_EOS(const std::size_t i, const std:
 
             // Remove the residual part
             EOS.alphar.empty_the_EOS();
-            // Set the SRK contribution
-            EOS.alphar.SRK = ResidualHelmholtzSRK(Tc, pc, rhomolarc, acentric, R);
+            // Set the contribution
+            shared_ptr<AbstractCubic> ac;
+            if (EOS_name == "SRK"){
+                ac.reset(new SRK(Tc, pc, acentric, R));
+            }
+            else{
+                ac.reset(new PengRobinson(Tc, pc, acentric, R));
+            }
+            ac->set_Tr(Tc);
+            ac->set_rhor(rhomolarc);
+            EOS.alphar.cubic = ResidualHelmholtzGeneralizedCubic(ac);
         }
         else if (EOS_name == "XiangDeiters"){
 
@@ -1436,6 +1458,29 @@ void HelmholtzEOSMixtureBackend::p_phase_determination_pure_or_pseudopure(int ot
         {
             case iT:
             {
+
+                if (has_melting_line()){
+                    double Tm = melting_line(iT, iP, _p);
+                    if (get_config_bool(DONT_CHECK_PROPERTY_LIMITS)){
+                        _phase = iphase_liquid;
+                    }
+                    else{
+                        if (_T < Tm){
+                            throw ValueError(format("For now, we don't support T [%g K] below Tmelt(p) [%g K]", _T, Tm));
+                        }
+                    }
+                }
+                else{
+                    if (get_config_bool(DONT_CHECK_PROPERTY_LIMITS)){
+                        _phase = iphase_liquid;
+                    }
+                    else{
+                        if (_T < Tmin()){
+                            throw ValueError(format("For now, we don't support T [%g K] below Tmin(saturation) [%g K]", _T, Tmin()));
+                        }
+                    }
+                }
+                
                 CoolPropDbl T_vap =  0.1 + static_cast<double>(_TVanc);
                 CoolPropDbl T_liq = -0.1 + static_cast<double>(_TLanc);
 
@@ -2123,7 +2168,7 @@ HelmholtzEOSBackend::StationaryPointReturnFlag HelmholtzEOSMixtureBackend::solve
             // Now we are going to do something VERY slow - increase density until curvature is positive
             double rho = 1e-6;
             for (std::size_t counter = 0; counter <= 100; counter ++){
-                double dpdrho = resid.call(rho); // Updates the state
+                resid.call(rho); // Updates the state
                 double curvature = resid.deriv(rho);
                 if (curvature > 0){
                     light = rho;
@@ -2303,11 +2348,11 @@ CoolPropDbl HelmholtzEOSMixtureBackend::solver_rho_Tp_global(CoolPropDbl T, Cool
             return rho_vap;
         }
         else{
-            throw CoolProp::ValueError(format("No density solutions for T=%g,p=%g,z=%s", T, p, vec_to_string(mole_fractions, "%0.12g")));
+            throw CoolProp::ValueError(format("No density solutions for T=%g,p=%g,z=%s", T, p, vec_to_string(mole_fractions, "%0.12g").c_str()));
         }
     }
     else{
-        throw CoolProp::ValueError(format("One stationary point (not good) for T=%g,p=%g,z=%s", T, p, vec_to_string(mole_fractions, "%0.12g")));
+        throw CoolProp::ValueError(format("One stationary point (not good) for T=%g,p=%g,z=%s", T, p, vec_to_string(mole_fractions, "%0.12g").c_str()));
     }
 };
     
@@ -2373,9 +2418,8 @@ CoolPropDbl HelmholtzEOSMixtureBackend::solver_rho_Tp(CoolPropDbl T, CoolPropDbl
     }
 
     try{
-        // First we try with 4th order Householder method with analytic derivatives
-        double rhomolar = Householder4(resid, rhomolar_guess, 1e-8, 100);
-        if (!ValidNumber(rhomolar)){
+        double rhomolar = rhomolar = Householder4(resid, rhomolar_guess, 1e-8, 20);
+        if (!ValidNumber(rhomolar) || rhomolar < 0) {
             throw ValueError();
         }
         if (phase == iphase_liquid){
@@ -2404,7 +2448,7 @@ CoolPropDbl HelmholtzEOSMixtureBackend::solver_rho_Tp(CoolPropDbl T, CoolPropDbl
             double rhomolar = Brent(resid, 1e-10, 3*rhomolar_reducing(), DBL_EPSILON, 1e-8, 100);
             return rhomolar;
         }
-        throw ValueError(format("solver_rho_Tp was unable to find a solution for T=%10Lg, p=%10Lg, with guess value %10Lg",T,p,rhomolar_guess));
+        throw ValueError(format("solver_rho_Tp was unable to find a solution for T=%10Lg, p=%10Lg, with guess value %10Lg with error: %s",T,p,rhomolar_guess, e.what()));
     }
 }
 CoolPropDbl HelmholtzEOSMixtureBackend::solver_rho_Tp_SRK(CoolPropDbl T, CoolPropDbl p, phases phase)
@@ -2944,13 +2988,15 @@ CoolPropDbl HelmholtzEOSMixtureBackend::calc_alpha0_deriv_nocache(const int nTau
         CoolPropDbl summer = 0;
         CoolPropDbl tau_i, delta_i, rho_ci, T_ci;
         for (unsigned int i = 0; i < N; ++i){
-            rho_ci = components[i].EOS().reduce.rhomolar;
-            T_ci = components[i].EOS().reduce.T;
+            
+            rho_ci = get_fluid_constant(i, irhomolar_critical);
+            T_ci = get_fluid_constant(i, iT_critical);
             tau_i = T_ci*tau/Tr;
             delta_i = delta*rhor/rho_ci;
 
             if (nTau == 0 && nDelta == 0){
-                summer += mole_fractions[i]*(components[i].EOS().base0(tau_i, delta_i)+log(mole_fractions[i]));
+                double logxi = (std::abs(mole_fractions[i]) > DBL_EPSILON) ? log(mole_fractions[i]) : 0;
+                summer += mole_fractions[i]*(components[i].EOS().base0(tau_i, delta_i) + logxi);
             }
             else if (nTau == 0 && nDelta == 1){
                 summer += mole_fractions[i]*rhor/rho_ci*components[i].EOS().dalpha0_dDelta(tau_i, delta_i);
@@ -3229,7 +3275,7 @@ CoolPropDbl HelmholtzEOSMixtureBackend::calc_first_two_phase_deriv(parameters Of
         return -POW2(rhomass())*(1/SatV->rhomass() - 1/SatL->rhomass())/(SatV->hmass() - SatL->hmass());
     }
     else if (Of == iDmolar && Wrt == iP && Constant == iHmolar){
-        // v = 1/rho; dvdrho = -rho^2; dvdrho = -1/rho^2
+        // v = 1/rho; drhodv = -rho^2; dvdrho = -1/rho^2
         CoolPropDbl dvdrhoL = -1/POW2(SatL->rhomolar());
         CoolPropDbl dvdrhoV = -1/POW2(SatV->rhomolar());
         CoolPropDbl dvL_dp = dvdrhoL*SatL->calc_first_saturation_deriv(iDmolar, iP, *SatL, *SatV);
@@ -3241,7 +3287,7 @@ CoolPropDbl HelmholtzEOSMixtureBackend::calc_first_two_phase_deriv(parameters Of
         return -POW2(rhomolar())*dvdp_h;
     }
     else if (Of == iDmass && Wrt == iP && Constant == iHmass){
-        // v = 1/rho; dvdrho = -rho^2; dvdrho = -1/rho^2
+        // v = 1/rho; drhodv = -rho^2; dvdrho = -1/rho^2
         CoolPropDbl dvdrhoL = -1/POW2(SatL->rhomass());
         CoolPropDbl dvdrhoV = -1/POW2(SatV->rhomass());
         CoolPropDbl dvL_dp = dvdrhoL*SatL->calc_first_saturation_deriv(iDmass, iP, *SatL, *SatV);
@@ -3258,9 +3304,43 @@ CoolPropDbl HelmholtzEOSMixtureBackend::calc_first_two_phase_deriv(parameters Of
 }
 CoolPropDbl HelmholtzEOSMixtureBackend::calc_first_two_phase_deriv_splined(parameters Of, parameters Wrt, parameters Constant, CoolPropDbl x_end)
 {
+	// Note: If you need all three values (drho_dh__p, drho_dp__h and rho_spline), 
+	// you should calculate drho_dp__h first to avoid duplicate calculations.
+
+	bool drho_dh__p = false;
+	bool drho_dp__h = false;
+	bool rho_spline = false;
+
+	if (Of == iDmolar && Wrt == iHmolar && Constant == iP){
+		drho_dh__p = true;
+		if (_drho_spline_dh__constp) return _drho_spline_dh__constp;
+	}
+	else if (Of == iDmass && Wrt == iHmass && Constant == iP){
+		return first_two_phase_deriv_splined(iDmolar, iHmolar, iP, x_end)*POW2(molar_mass());
+	}
+	else if (Of == iDmolar && Wrt == iP && Constant == iHmolar){
+		drho_dp__h = true;
+		if (_drho_spline_dp__consth) return _drho_spline_dp__consth;
+	}
+	else if (Of == iDmass && Wrt == iP && Constant == iHmass){
+		return first_two_phase_deriv_splined(iDmolar, iP, iHmolar, x_end)*molar_mass();
+	}
+	// Add the special case for the splined density
+	else if (Of == iDmolar && Wrt == iDmolar && Constant == iDmolar){
+		rho_spline = true;
+		if (_rho_spline) return _rho_spline;
+	}
+	else if (Of == iDmass && Wrt == iDmass && Constant == iDmass){
+		return first_two_phase_deriv_splined(iDmolar, iDmolar, iDmolar, x_end)*molar_mass();
+	}
+	else{
+		throw ValueError("These inputs are not supported to calc_first_two_phase_deriv");
+	}
+
 	if (!this->SatL || !this->SatV) throw ValueError(format("The saturation properties are needed for calc_first_two_phase_deriv_splined"));
-    if (_Q > x_end){throw ValueError(format("Q [%g] is greater than x_end [%Lg]", _Q, x_end).c_str());}
-    if (_phase != iphase_twophase){throw ValueError(format("state is not two-phase")); }
+	if (_Q > x_end){ throw ValueError(format("Q [%g] is greater than x_end [%Lg]", _Q, x_end).c_str()); }
+	if (_phase != iphase_twophase){ throw ValueError(format("state is not two-phase")); }
+
     shared_ptr<HelmholtzEOSMixtureBackend> Liq(new HelmholtzEOSMixtureBackend(this->get_components())), 
                                            End(new HelmholtzEOSMixtureBackend(this->get_components()));
     
@@ -3268,91 +3348,73 @@ CoolPropDbl HelmholtzEOSMixtureBackend::calc_first_two_phase_deriv_splined(param
     Liq->_Q = -1;
     Liq->update_DmolarT_direct(SatL->rhomolar(), SatL->T());
     End->update(QT_INPUTS, x_end, SatL->T());
-    
-    bool mass_based_inputs = ((Of == iDmass) && ((Wrt == iHmass && Constant == iP) || (Wrt == iP && Constant == iHmass) || (Wrt == iDmass && Constant == iDmass)));
-    bool mole_based_inputs = ((Of == iDmolar) && ((Wrt == iHmolar && Constant == iP) || (Wrt == iP && Constant == iHmolar) || (Wrt == iDmolar && Constant == iDmolar)));
-    if (mass_based_inputs || mole_based_inputs)
-    {
-        parameters p_key, h_key, rho_key;
-        if (mass_based_inputs){ 
-            rho_key = iDmass; h_key = iHmass; p_key = iP;
-        }
-        else{
-            rho_key = iDmolar; h_key = iHmolar; p_key = iP;
-        }
+           
+    CoolPropDbl Delta = Q()*(SatV->keyed_output(iHmolar) - SatL->keyed_output(iHmolar));
+    CoolPropDbl Delta_end = End->keyed_output(iHmolar) - SatL->keyed_output(iHmolar);
         
-        CoolPropDbl Delta = Q()*(SatV->keyed_output(h_key) - SatL->keyed_output(h_key));
-        CoolPropDbl Delta_end = End->keyed_output(h_key) - SatL->keyed_output(h_key);
+    // At the end of the zone to which spline is applied
+    CoolPropDbl drho_dh_end = End->calc_first_two_phase_deriv(iDmolar, iHmolar, iP);
+    CoolPropDbl rho_end = End->keyed_output(iDmolar);
         
-        // At the end of the zone to which spline is applied
-        CoolPropDbl drho_dh_end = End->calc_first_two_phase_deriv(rho_key, h_key, p_key);
-        CoolPropDbl rho_end = End->keyed_output(rho_key);
+    // Faking single-phase
+    CoolPropDbl rho_liq = Liq->keyed_output(iDmolar);
+    CoolPropDbl drho_dh_liq__constp = Liq->first_partial_deriv(iDmolar, iHmolar, iP);
         
-        // Faking single-phase
-        CoolPropDbl rho_liq = Liq->keyed_output(rho_key);
-        CoolPropDbl drho_dh_liq__constp = Liq->first_partial_deriv(rho_key, h_key, p_key);
+    // Spline coordinates a, b, c, d
+    CoolPropDbl Abracket = (2*rho_liq - 2*rho_end + Delta_end * (drho_dh_liq__constp + drho_dh_end));
+    CoolPropDbl a = 1/POW3(Delta_end) * Abracket;
+    CoolPropDbl b = 3/POW2(Delta_end) * (-rho_liq + rho_end) - 1/Delta_end * (drho_dh_end + 2 * drho_dh_liq__constp);
+    CoolPropDbl c = drho_dh_liq__constp;
+    CoolPropDbl d = rho_liq;
         
-        // Spline coordinates a, b, c, d
-        CoolPropDbl Abracket = (2*rho_liq - 2*rho_end + Delta_end * (drho_dh_liq__constp + drho_dh_end));
-        CoolPropDbl a = 1/POW3(Delta_end) * Abracket;
-        CoolPropDbl b = 3/POW2(Delta_end) * (-rho_liq + rho_end) - 1/Delta_end * (drho_dh_end + 2 * drho_dh_liq__constp);
-        CoolPropDbl c = drho_dh_liq__constp;
-        CoolPropDbl d = rho_liq;
+	// Either the spline value or drho/dh|p can be directly evaluated now
+	_rho_spline = a*POW3(Delta) + b*POW2(Delta) + c*Delta + d;
+	_drho_spline_dh__constp = 3 * a*POW2(Delta) + 2 * b*Delta + c;
+	if (rho_spline) return _rho_spline;
+	if (drho_dh__p) return _drho_spline_dh__constp;
         
-        // Either the spline value or drho/dh|p can be directly evaluated now
-        CoolPropDbl rho_spline = a*POW3(Delta) + b*POW2(Delta) + c*Delta + d;
-        CoolPropDbl d_rho_spline_dh__constp = 3*a*POW2(Delta) + 2*b*Delta + c;
-        if ((Wrt == iDmass || Wrt == iDmolar) && (Constant == iDmass || Constant == iDmolar)){
-            return rho_spline;
-        }
-        if ((Wrt == iHmass || Wrt == iHmolar) && Constant == iP){
-            return d_rho_spline_dh__constp;
-        }
+    // It's drho/dp|h
+    // ... calculate some more things
         
-        // It's drho/dp|h
-        // ... calculate some more things
+    // Derivatives *along* the saturation curve using the special internal method
+    CoolPropDbl dhL_dp_sat =  SatL->calc_first_saturation_deriv(iHmolar, iP, *SatL, *SatV);
+    CoolPropDbl dhV_dp_sat =  SatV->calc_first_saturation_deriv(iHmolar, iP, *SatL, *SatV);
+    CoolPropDbl drhoL_dp_sat = SatL->calc_first_saturation_deriv(iDmolar, iP, *SatL, *SatV);
+    CoolPropDbl drhoV_dp_sat = SatV->calc_first_saturation_deriv(iDmolar, iP, *SatL, *SatV);
+    CoolPropDbl rhoV = SatV->keyed_output(iDmolar);
+    CoolPropDbl rhoL = SatL->keyed_output(iDmolar);
+    CoolPropDbl drho_dp_end = POW2(End->keyed_output(iDmolar))*(x_end/POW2(rhoV)*drhoV_dp_sat + (1-x_end)/POW2(rhoL)*drhoL_dp_sat);
         
-        // Derivatives *along* the saturation curve using the special internal method
-        CoolPropDbl dhL_dp_sat =  SatL->calc_first_saturation_deriv(h_key, p_key, *SatL, *SatV);
-        CoolPropDbl dhV_dp_sat =  SatV->calc_first_saturation_deriv(h_key, p_key, *SatL, *SatV);
-        CoolPropDbl drhoL_dp_sat = SatL->calc_first_saturation_deriv(rho_key, p_key, *SatL, *SatV);
-        CoolPropDbl drhoV_dp_sat = SatV->calc_first_saturation_deriv(rho_key, p_key, *SatL, *SatV);
-        CoolPropDbl rhoV = SatV->keyed_output(rho_key);
-        CoolPropDbl rhoL = SatL->keyed_output(rho_key);
-        CoolPropDbl drho_dp_end = POW2(End->keyed_output(rho_key))*(x_end/POW2(rhoV)*drhoV_dp_sat + (1-x_end)/POW2(rhoL)*drhoL_dp_sat);
+    // Faking single-phase
+    //CoolPropDbl drho_dp__consth_liq = Liq->first_partial_deriv(iDmolar, iP, iHmolar);
+    CoolPropDbl d2rhodhdp_liq = Liq->second_partial_deriv(iDmolar, iHmolar, iP, iP, iHmolar); // ?
         
-        // Faking single-phase
-        //CoolPropDbl drho_dp__consth_liq = Liq->first_partial_deriv(rho_key, p_key, h_key);
-        CoolPropDbl d2rhodhdp_liq = Liq->second_partial_deriv(rho_key, h_key, p_key, p_key, h_key); // ?
+    // Derivatives at the end point
+    // CoolPropDbl drho_dp__consth_end = End->calc_first_two_phase_deriv(iDmolar, iP, iHmolar);
+    CoolPropDbl d2rhodhdp_end = End->calc_second_two_phase_deriv(iDmolar, iHmolar, iP, iP, iHmolar);
         
-        // Derivatives at the end point
-        // CoolPropDbl drho_dp__consth_end = End->calc_first_two_phase_deriv(rho_key, p_key, h_key);
-        CoolPropDbl d2rhodhdp_end = End->calc_second_two_phase_deriv(rho_key, h_key, p_key, p_key, h_key);
+    // Reminder:
+    // Delta = Q()*(hV-hL) = h-hL
+    // Delta_end = x_end*(hV-hL);
+    CoolPropDbl d_Delta_dp__consth = -dhL_dp_sat;
+    CoolPropDbl d_Delta_end_dp__consth = x_end*(dhV_dp_sat - dhL_dp_sat);
         
-        // Reminder:
-        // Delta = Q()*(hV-hL) = h-hL
-        // Delta_end = x_end*(hV-hL);
-        CoolPropDbl d_Delta_dp__consth = -dhL_dp_sat;
-        CoolPropDbl d_Delta_end_dp__consth = x_end*(dhV_dp_sat - dhL_dp_sat);
+    // First pressure derivative at constant h of the coefficients a,b,c,d
+    // CoolPropDbl Abracket = (2*rho_liq - 2*rho_end + Delta_end * (drho_dh_liq__constp + drho_dh_end));
+    CoolPropDbl d_Abracket_dp_consth = (2*drhoL_dp_sat - 2*drho_dp_end + Delta_end*(d2rhodhdp_liq + d2rhodhdp_end) + d_Delta_end_dp__consth*(drho_dh_liq__constp + drho_dh_end));
+    CoolPropDbl da_dp = 1/POW3(Delta_end)*d_Abracket_dp_consth + Abracket*(-3/POW4(Delta_end)*d_Delta_end_dp__consth);
+    CoolPropDbl db_dp = - 6/POW3(Delta_end)*d_Delta_end_dp__consth*(rho_end - rho_liq)
+                        + 3/POW2(Delta_end)*(drho_dp_end - drhoL_dp_sat)
+                        + (1/POW2(Delta_end)*d_Delta_end_dp__consth) * (drho_dh_end + 2*drho_dh_liq__constp)
+                        - (1/Delta_end) * (d2rhodhdp_end + 2*d2rhodhdp_liq);
+    CoolPropDbl dc_dp = d2rhodhdp_liq;
+    CoolPropDbl dd_dp = drhoL_dp_sat;
         
-        // First pressure derivative at constant h of the coefficients a,b,c,d
-        // CoolPropDbl Abracket = (2*rho_liq - 2*rho_end + Delta_end * (drho_dh_liq__constp + drho_dh_end));
-        CoolPropDbl d_Abracket_dp_consth = (2*drhoL_dp_sat - 2*drho_dp_end + Delta_end*(d2rhodhdp_liq + d2rhodhdp_end) + d_Delta_end_dp__consth*(drho_dh_liq__constp + drho_dh_end));
-        CoolPropDbl da_dp = 1/POW3(Delta_end)*d_Abracket_dp_consth + Abracket*(-3/POW4(Delta_end)*d_Delta_end_dp__consth);
-        CoolPropDbl db_dp = - 6/POW3(Delta_end)*d_Delta_end_dp__consth*(rho_end - rho_liq)
-                            + 3/POW2(Delta_end)*(drho_dp_end - drhoL_dp_sat)
-                            + (1/POW2(Delta_end)*d_Delta_end_dp__consth) * (drho_dh_end + 2*drho_dh_liq__constp)
-                            - (1/Delta_end) * (d2rhodhdp_end + 2*d2rhodhdp_liq);
-        CoolPropDbl dc_dp = d2rhodhdp_liq;
-        CoolPropDbl dd_dp = drhoL_dp_sat;
-        
-        CoolPropDbl d_rho_spline_dp__consth = (3*a*POW2(Delta) + 2*b*Delta + c)*d_Delta_dp__consth + POW3(Delta)*da_dp + POW2(Delta)*db_dp + Delta*dc_dp + dd_dp;
-    
-        return d_rho_spline_dp__consth;
-    }
-    else{
-        throw ValueError("inputs to calc_first_two_phase_deriv_splined are currently invalid");
-    }
+	_drho_spline_dp__consth = (3 * a*POW2(Delta) + 2 * b*Delta + c)*d_Delta_dp__consth + POW3(Delta)*da_dp + POW2(Delta)*db_dp + Delta*dc_dp + dd_dp;
+	if (drho_dp__h) return _drho_spline_dp__consth;
+
+	throw ValueError("Something went wrong in HelmholtzEOSMixtureBackend::calc_first_two_phase_deriv_splined");
+	return _HUGE;
 }
 
 CoolProp::CriticalState HelmholtzEOSMixtureBackend::calc_critical_point(double rho0, double T0)
@@ -3475,9 +3537,13 @@ public:
     };
 };
 
+
+/** This class is used to trace the spinodal of the mixture, and is also used to calculate critical points
+ */
 class L0CurveTracer : public FuncWrapper1DWithDeriv
 {
 public:
+
     CoolProp::HelmholtzEOSMixtureBackend &HEOS;
     double delta,
            tau,
@@ -3490,7 +3556,9 @@ public:
     std::vector<CoolProp::CriticalState> critical_points;
     int N_critical_points;
     Eigen::MatrixXd Lstar, adjLstar, dLstardTau, d2LstardTau2, dLstardDelta;
-    L0CurveTracer(HelmholtzEOSMixtureBackend &HEOS, double tau0, double delta0) : HEOS(HEOS), delta(delta0), tau(tau0), M1_last(_HUGE), N_critical_points(0)
+    SpinodalData spinodal_values;
+    bool find_critical_points; ///< If true, actually calculate the critical points, otherwise, skip evaluation of critical points but still trace the spinodal
+    L0CurveTracer(HelmholtzEOSMixtureBackend &HEOS, double tau0, double delta0) : HEOS(HEOS), delta(delta0), tau(tau0), M1_last(_HUGE), N_critical_points(0), find_critical_points(true)
     {
         R_delta_tracer = 0.1;
         R_delta = R_delta_tracer;
@@ -3498,7 +3566,7 @@ public:
         R_tau = R_tau_tracer;
     };
     /***
-     \brief Calculate the value of L1
+     \brief Update values for tau, delta
      @param theta The angle
      @param tau The old value of tau
      @param delta The old value of delta
@@ -3594,7 +3662,8 @@ public:
             // If the sign of M1 and the previous value of M1 have different signs, it means that
             // you have bracketed a critical point, run the full critical point solver to
             // find the critical point and store it
-            if (i > 0 && M1*M1_last < 0){
+            // Only enabled if find_critical_points is true (the default)
+            if (i > 0 && M1*M1_last < 0 && find_critical_points){
                 double rhomolar = HEOS.rhomolar_reducing()*(delta+delta_new)/2.0, T = HEOS.T_reducing()/((tau+tau_new)/2.0);
                 CoolProp::CriticalState crit = HEOS.calc_critical_point(rhomolar, T);
                 critical_points.push_back(crit);
@@ -3609,6 +3678,10 @@ public:
             this->delta = delta_new;
             this->M1_last = M1;
             this->theta_last = theta;
+            
+            this->spinodal_values.tau.push_back(tau_new);
+            this->spinodal_values.delta.push_back(delta_new);
+            this->spinodal_values.M1.push_back(M1);
         }
     };
 };
@@ -3624,7 +3697,7 @@ void HelmholtzEOSMixtureBackend::calc_criticality_contour_values(double &L1star,
 void HelmholtzEOSMixtureBackend::get_critical_point_search_radii(double &R_delta, double &R_tau){
     R_delta = 0.025; R_tau = 0.1;
 }
-std::vector<CoolProp::CriticalState> HelmholtzEOSMixtureBackend::calc_all_critical_points()
+std::vector<CoolProp::CriticalState> HelmholtzEOSMixtureBackend::_calc_all_critical_points(bool find_critical_points)
 {
     // Populate the temporary class used to calculate the critical point(s)
     add_critical_state();
@@ -3652,12 +3725,15 @@ std::vector<CoolProp::CriticalState> HelmholtzEOSMixtureBackend::calc_all_critic
     //double rho0 = delta0*rhomolar_reducing();
 
     L0CurveTracer tracer(*critical_state, tau_L0, delta0);
+    tracer.find_critical_points = find_critical_points;
 
     double R_delta = 0, R_tau = 0;
     critical_state->get_critical_point_search_radii(R_delta, R_tau);
     tracer.R_delta_tracer = R_delta;
     tracer.R_tau_tracer = R_tau;
     tracer.trace();
+    
+    this->spinodal_values = tracer.spinodal_values;
 
     return tracer.critical_points;
 }
@@ -3680,6 +3756,12 @@ double HelmholtzEOSMixtureBackend::calc_tangent_plane_distance(const double T, c
 			              - log(MixtureDerivatives::fugacity_i(*this, i, XN_DEPENDENT)));
 	}
 	return summer;
+}
+    
+void HelmholtzEOSMixtureBackend::calc_build_spinodal(){
+    // Ok, we are faking a little bit here, hijacking the code for critical points, but skipping evaluation of critical points
+    bool find_critical_points = false;
+    _calc_all_critical_points(find_critical_points);
 }
 
 } /* namespace CoolProp */

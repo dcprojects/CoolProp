@@ -217,6 +217,7 @@ bool REFPROPMixtureBackend::REFPROP_supported () {
                 printf("add location of REFPROP to the PATH environment variable or your library path.\n\n");
                 printf("In case you do not use Windows, have a look at https://github.com/jowr/librefprop.so \n");
                 printf("to find instructions on how to compile your own version of the REFPROP library.\n\n");
+                printf("ALTERNATIVE_REFPROP_PATH: %s\n", alt_rp_path.c_str());
                 _REFPROP_supported = false;
                 return false;
             }
@@ -235,7 +236,9 @@ std::string REFPROPMixtureBackend::version(){
     long N = -1;
     long ierr = 0;
     char fluids[10000] = "", hmx[] = "HMX.BNC", default_reference_state[] = "DEF", herr[255] = "";
-    REFPROPMixtureBackend::REFPROP_supported();
+    if (!REFPROP_supported()) {
+      return "n/a";
+    };
     // Pad the version string with NULL characters
     for (int i = 0; i < 255; ++i){
         herr[i] = '\0';
@@ -391,7 +394,9 @@ void REFPROPMixtureBackend::set_REFPROP_fluids(const std::vector<std::string> &f
             if (get_config_bool(REFPROP_DONT_ESTIMATE_INTERACTION_PARAMETERS) && ierr == -117){
                 throw ValueError(format("Interaction parameter estimation has been disabled: %s", herr));
             }
-
+            if (get_config_bool(REFPROP_IGNORE_ERROR_ESTIMATED_INTERACTION_PARAMETERS) && ierr == 117) {
+                ierr = 0;
+            }
             if (static_cast<int>(ierr) <= 0) // Success (or a warning, which is silently squelched for now)
             {
                 this->Ncomp = N;
@@ -522,6 +527,25 @@ std::string REFPROPMixtureBackend::get_binary_interaction_string(const std::stri
         return "";
     }
 }
+/// Set binary mixture string value
+void REFPROPMixtureBackend::set_binary_interaction_string(const std::size_t i, const std::size_t j, const std::string &parameter, const std::string &value) {
+
+    long icomp = static_cast<long>(i) + 1, jcomp = static_cast<long>(j) + 1, ierr = 0L;
+    char hmodij[4], hfmix[255], hbinp[255], hfij[255], hmxrul[255];
+    double fij[6];
+    char herr[255];
+
+    // Get the current state
+    GETKTVdll(&icomp, &jcomp, hmodij, fij, hfmix, hfij, hbinp, hmxrul, 3, 255, 255, 255, 255);
+
+    if (parameter == "model") {
+        strcpy(hmodij, value.c_str());
+    }
+    else {
+        throw ValueError(format("I don't know what to do with your parameter [%s]", parameter.c_str()));
+    }
+    SETKTVdll(&icomp, &jcomp, hmodij, fij, hfmix, &ierr, herr, 3, 255, 255);
+}
 /// Set binary mixture string parameter (EXPERT USE ONLY!!!)
 void REFPROPMixtureBackend::set_binary_interaction_double(const std::size_t i, const std::size_t j, const std::string &parameter, const double value){
     long icomp = static_cast<long>(i)+1, jcomp = static_cast<long>(j)+1, ierr = 0L;
@@ -549,6 +573,7 @@ void REFPROPMixtureBackend::set_binary_interaction_double(const std::size_t i, c
         throw ValueError(format("For now, model [%s] must start with KW or GE", hmodij));
     }
 }
+
 /// Get binary mixture double value (EXPERT USE ONLY!!!)
 double REFPROPMixtureBackend::get_binary_interaction_double(const std::size_t i, const std::size_t j, const std::string &parameter){
     long icomp = static_cast<long>(i)+1, jcomp = static_cast<long>(j)+1;
@@ -1910,7 +1935,12 @@ CoolPropDbl REFPROPMixtureBackend::calc_saturated_liquid_keyed_output(parameters
             return _rhoLmolar;
         }
         else if (key == iDmass) {
-            return (double)_rhoLmolar*(double)_molar_mass;
+            return static_cast<double>(_rhoLmolar)*calc_saturated_liquid_keyed_output(imolar_mass);
+        }
+        else if (key == imolar_mass){
+            double wmm_kg_kmol = 0;
+            WMOLdll(&(mole_fractions_liq[0]), &wmm_kg_kmol); // returns mole mass in kg/kmol
+            return wmm_kg_kmol/1000; // kg/mol
         }
         else {
             throw ValueError("Invalid parameter. Only mass and molar density are available with RefProp");
@@ -1926,7 +1956,12 @@ CoolPropDbl REFPROPMixtureBackend::calc_saturated_vapor_keyed_output(parameters 
             return _rhoVmolar;
         }
         else if (key == iDmass) {
-            return (double)_rhoVmolar*(double)_molar_mass;
+            return static_cast<double>(_rhoVmolar)*calc_saturated_liquid_keyed_output(imolar_mass);
+        }
+        else if (key == imolar_mass){
+            double wmm_kg_kmol = 0;
+            WMOLdll(&(mole_fractions_vap[0]), &wmm_kg_kmol); // returns mole mass in kg/kmol
+            return wmm_kg_kmol/1000; // kg/mol
         }
         else {
             throw ValueError("Invalid key.");

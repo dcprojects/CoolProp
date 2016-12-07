@@ -19,6 +19,9 @@ cdef class PyGuessesStructure:
         self.rhomolar_vap = get_HUGE()
         self.x = []
         self.y = []
+
+cdef class PySpinodalData:
+    pass
     
 cdef class AbstractState:
     """
@@ -77,9 +80,13 @@ cdef class AbstractState:
         else:
             return self.thisptr.get_binary_interaction_double(<string>arg1, <string>arg2, parameter)
 
-    cpdef set_binary_interaction_string(self, string CAS1, string CAS2, string parameter, string val):
+    cpdef set_binary_interaction_string(self, string_or_size_t arg1, string_or_size_t arg2, string parameter, string val):
         """ Set a string interaction parameter - wrapper of c++ function :cpapi:`CoolProp::AbstractState::set_binary_interaction_string` """
-        self.thisptr.set_binary_interaction_string(CAS1, CAS2, parameter, val)
+        if string_or_size_t in cython.integral:
+            self.thisptr.set_binary_interaction_string(<size_t>arg1, <size_t>arg2, parameter, val)
+        else:  
+            self.thisptr.set_binary_interaction_string(<string>arg1, <string>arg2, parameter, val)
+            
     cpdef string get_binary_interaction_string(self, string CAS1, string CAS2, string parameter) except *:
         """ Get a string interaction parameter - wrapper of c++ function :cpapi:`CoolProp::AbstractState::get_binary_interaction_string` """
         return self.thisptr.get_binary_interaction_string(CAS1, CAS2, parameter)
@@ -169,6 +176,18 @@ cdef class AbstractState:
         cdef CoolPropDbl L1star = 0, M1star = 0
         self.thisptr.criticality_contour_values(L1star, M1star)
         return L1star, M1star
+
+    cpdef build_spinodal(self):
+        """ Calculate the spinodal - wrapper of c++ function :cpapi:`CoolProp::AbstractState::build_spinodal` """
+        self.thisptr.build_spinodal()
+    cpdef PySpinodalData get_spinodal_data(self):
+        """ Get the data from the spinodal - wrapper of c++ function :cpapi:`CoolProp::AbstractState::get_spinodal_data` """
+        cdef cAbstractState.SpinodalData data = self.thisptr.get_spinodal_data()
+        cdef PySpinodalData out = PySpinodalData()
+        out.tau = data.tau
+        out.delta = data.delta
+        out.M1 = data.M1
+        return out
         
     ## Reducing point
     cpdef double T_reducing(self) except *:

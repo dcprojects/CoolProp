@@ -167,12 +167,14 @@ namespace SaturationSolvers
         
         for (unsigned int i = 0; i < z.size(); i++)
         {
-            const EquationOfState &EOS = HEOS.get_components()[i].EOS(); 
-
-            ptriple += EOS.sat_min_liquid.p*z[i];
-            pcrit += EOS.reduce.p*z[i];
-            Ttriple += EOS.sat_min_liquid.T*z[i];
-            Tcrit += EOS.reduce.T*z[i];
+            Tcrit += HEOS.get_fluid_constant(i, iT_critical)*z[i];
+            pcrit += HEOS.get_fluid_constant(i, iP_critical)*z[i];
+            Ttriple += HEOS.get_fluid_constant(i, iT_triple)*z[i];
+            ptriple += HEOS.get_fluid_constant(i, iP_triple)*z[i];
+        }
+        // Return an invalid number if either triple point temperature or pressure are not available
+        if (!ValidNumber(Ttriple) || !ValidNumber(ptriple)){
+            return _HUGE;
         }
 
         if (input_type == imposed_T)
@@ -248,7 +250,7 @@ namespace SaturationSolvers
         else{
             // Find first guess for output variable using Wilson K-factors
             WilsonK_resid Resid(HEOS, beta, input_value, input_type, z, HEOS.get_K());
-            if (guess < 0)
+            if (guess < 0 || !ValidNumber(guess))
                 out = Brent(Resid, 50, 10000, 1e-10, 1e-10, 100);
             else
                 out = Secant(Resid, guess, 0.001, 1e-10, 100);
@@ -436,6 +438,49 @@ namespace SaturationSolvers
          */
         void check_Jacobian();
     };
+    
+    struct PTflash_twophase_options{
+        int Nstep_max;
+        std::size_t Nsteps;
+        CoolPropDbl omega, rhomolar_liq, rhomolar_vap, pL, pV, p, T;
+        std::vector<CoolPropDbl> x, ///< Liquid mole fractions
+                                 y, ///< Vapor mole fractions
+                                 z; ///< Bulk mole fractions
+        PTflash_twophase_options() : omega(_HUGE), rhomolar_liq(_HUGE), rhomolar_vap(_HUGE), pL(_HUGE), pV(_HUGE), p(_HUGE), T(_HUGE){
+            Nstep_max = 30;  Nsteps = 0; // Defaults
+        }
+    };
+    
+    class PTflash_twophase
+    {
+    public:
+        double error_rms;
+        bool logging;
+        int Nsteps;
+        Eigen::MatrixXd J;
+        Eigen::VectorXd r, err_rel;
+        HelmholtzEOSMixtureBackend &HEOS;
+        PTflash_twophase_options &IO;
+        std::vector<SuccessiveSubstitutionStep> step_logger;
+        
+        PTflash_twophase(HelmholtzEOSMixtureBackend &HEOS, PTflash_twophase_options &IO) : HEOS(HEOS), IO(IO){};
+        
+        /** \brief Call the Newton-Raphson Solver to solve the equilibrium conditions
+         *
+         * This solver must be passed reasonable guess values for the mole fractions,
+         * densities, etc.  You may want to take a few steps of successive substitution
+         * before you start with Newton Raphson.
+         *
+         */
+        void solve();
+        
+        /** \brief Build the arrays for the Newton-Raphson solve
+         *
+         * This method builds the Jacobian matrix, the sensitivity matrix, etc.
+         *
+         */
+        void build_arrays();
+    };
 };
     
 namespace StabilityRoutines{
@@ -446,7 +491,7 @@ namespace StabilityRoutines{
     class StabilityEvaluationClass{
     protected:
         HelmholtzEOSMixtureBackend &HEOS;
-        std::vector<double> lnK, K, K0, x, y;
+        std::vector<double> lnK, K, K0, x, y, xL, xH;
         const std::vector<double> &z;
         double rhomolar_liq, rhomolar_vap, beta, tpd_liq, tpd_vap, DELTAG_nRT;
         double m_T, ///< The temperature to be used (if specified, otherwise that from HEOS)
@@ -489,6 +534,10 @@ namespace StabilityRoutines{
             check_stability();
             return _stable;
         }
+        /// Accessor for liquid-phase composition and density
+        void get_liq(std::vector<double> &x, double &rhomolar){ x = this->x; rhomolar = rhomolar_liq; }
+        /// Accessor for vapor-phase composition and density
+        void get_vap(std::vector<double> &y, double &rhomolar){ y = this->y; rhomolar = rhomolar_vap; }
     };
         
 }; /* namespace StabilityRoutines*/

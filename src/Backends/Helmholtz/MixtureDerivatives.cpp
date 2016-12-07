@@ -108,7 +108,8 @@ CoolPropDbl MixtureDerivatives::dln_fugacity_dxj__constT_rho_xi(HelmholtzEOSMixt
 }
 
 CoolPropDbl MixtureDerivatives::ndln_fugacity_i_dnj__constT_V_xi(HelmholtzEOSMixtureBackend &HEOS, std::size_t i, std::size_t j, x_N_dependency_flag xN_flag){
-    return Kronecker_delta(i, j)/HEOS.mole_fractions[i]+nd2nalphardnidnj__constT_V(HEOS, i, j, xN_flag);
+    double s = (HEOS.mole_fractions[i] > DBL_EPSILON) ? Kronecker_delta(i, j)/HEOS.mole_fractions[i] : 0;
+    return s + nd2nalphardnidnj__constT_V(HEOS, i, j, xN_flag);
 }
 CoolPropDbl MixtureDerivatives::d_ndln_fugacity_i_dnj_dtau__constdelta_x(HelmholtzEOSMixtureBackend &HEOS, std::size_t i, std::size_t j, x_N_dependency_flag xN_flag){
     return d_ndalphardni_dTau(HEOS, j, xN_flag) + d_nd_ndalphardni_dnj_dTau__constdelta_x(HEOS, i, j, xN_flag);
@@ -127,7 +128,7 @@ CoolPropDbl MixtureDerivatives::d_ndln_fugacity_i_dnj_ddelta__consttau_x(Helmhol
     return d_ndalphardni_dDelta(HEOS, j, xN_flag) + d_nd_ndalphardni_dnj_dDelta__consttau_x(HEOS, i, j, xN_flag);
 }
 CoolPropDbl MixtureDerivatives::d_ndln_fugacity_i_dnj_ddxk__consttau_delta(HelmholtzEOSMixtureBackend &HEOS, std::size_t i, std::size_t j, std::size_t k, x_N_dependency_flag xN_flag){
-    CoolPropDbl s = -Kronecker_delta(i, j)*Kronecker_delta(i, k)/pow(HEOS.mole_fractions[i], 2);
+    CoolPropDbl s = (HEOS.mole_fractions[i] > DBL_EPSILON) ? -Kronecker_delta(i, j)*Kronecker_delta(i, k)/pow(HEOS.mole_fractions[i], 2) : 0;
     return s + d_ndalphardni_dxj__constdelta_tau_xi(HEOS, j, k, xN_flag) + d_nd_ndalphardni_dnj_dxk__consttau_delta(HEOS, i, j, k, xN_flag);
 }
 CoolPropDbl MixtureDerivatives::d2_ndln_fugacity_i_dnj_dxk_dTau__constdelta(HelmholtzEOSMixtureBackend &HEOS, std::size_t i, std::size_t j, std::size_t k, x_N_dependency_flag xN_flag){
@@ -738,7 +739,8 @@ CoolPropDbl MixtureDerivatives::dalpha0_dxi(HelmholtzEOSMixtureBackend &HEOS, st
     double delta_oi = HEOS.delta()*rhor/rhoci;
     double Rratioi = 1;//HEOS.gas_constant()/HEOS.components[i].EOS().R_u;
     
-    double term = Rratioi*HEOS.components[i].EOS().alpha0.base(tau_oi, delta_oi) + log(HEOS.mole_fractions[i]) + 1;
+    double logxi = (std::abs(HEOS.mole_fractions[i]) > DBL_EPSILON) ? (log(HEOS.mole_fractions[i])) : 0;
+    double term = Rratioi*HEOS.components[i].EOS().alpha0.base(tau_oi, delta_oi) + logxi + 1;
     
     std::size_t kmax = HEOS.mole_fractions.size();
     if (xN_flag == XN_DEPENDENT){ kmax--; }
@@ -785,7 +787,7 @@ CoolPropDbl MixtureDerivatives::d2alpha0_dxi_dDelta(HelmholtzEOSMixtureBackend &
         double drhor_dxi = HEOS.Reducing->drhormolardxi__constxj(HEOS.mole_fractions, i, xN_flag);
         double ddeltaok_dxi = delta_ok/rhor*drhor_dxi; // (Gernert, supp. B.20)
         
-        double Rratiok = 1;//HEOS.gas_constant()/HEOS.components[k].EOS().R_u;
+        //double Rratiok = 1;//HEOS.gas_constant()/HEOS.components[k].EOS().R_u;
         double dalpha0ok_ddeltaok = HEOS.components[k].EOS().alpha0.dDelta(tau_ok, delta_ok);
 
         double d_dalpha0ok_ddeltaok_dxi = HEOS.components[k].EOS().alpha0.dDelta_dTau(tau_ok, delta_ok)*dtauok_dxi + HEOS.components[k].EOS().alpha0.dDelta2(tau_ok, delta_ok)*ddeltaok_dxi;
@@ -822,7 +824,7 @@ CoolPropDbl MixtureDerivatives::d2alpha0_dxi_dTau(HelmholtzEOSMixtureBackend &HE
         double drhor_dxi = HEOS.Reducing->drhormolardxi__constxj(HEOS.mole_fractions, i, xN_flag);
         double ddeltaok_dxi = delta_ok/rhor*drhor_dxi; // (Gernert, supp. B.20)
         
-        double Rratiok = 1;//HEOS.gas_constant()/HEOS.components[k].EOS().R_u;
+        //double Rratiok = 1;//HEOS.gas_constant()/HEOS.components[k].EOS().R_u;
         double dalpha0ok_dtauok = HEOS.components[k].EOS().alpha0.dTau(tau_ok, delta_ok);
         
         double d_dalpha0ok_dTauok_dxi = HEOS.components[k].EOS().alpha0.dTau2(tau_ok, delta_ok)*dtauok_dxi + HEOS.components[k].EOS().alpha0.dDelta_dTau(tau_ok, delta_ok)*ddeltaok_dxi;
@@ -861,13 +863,14 @@ CoolPropDbl MixtureDerivatives::d2alpha0dxidxj(HelmholtzEOSMixtureBackend &HEOS,
     double d2Tr_dxidxj = HEOS.Reducing->d2Trdxidxj(HEOS.mole_fractions, i, j, xN_flag);
     double d2rhor_dxidxj = HEOS.Reducing->d2rhormolardxidxj(HEOS.mole_fractions, i, j, xN_flag);
     
-    double Rratioi = 1;//HEOS.gas_constant()/HEOS.components[i].EOS().R_u;
+    //double Rratioi = 1;//HEOS.gas_constant()/HEOS.components[i].EOS().R_u;
     
     double d_dalpha0oi_dxj = HEOS.components[i].EOS().alpha0.dTau(tau_oi, delta_oi)*dtauoi_dxj + HEOS.components[i].EOS().alpha0.dDelta(tau_oi, delta_oi)*ddeltaoi_dxj;
     double d_dalpha0oj_dxi = HEOS.components[j].EOS().alpha0.dTau(tau_oj, delta_oj)*dtauoj_dxi + HEOS.components[j].EOS().alpha0.dDelta(tau_oj, delta_oj)*ddeltaoj_dxi;
     
-    double xi = HEOS.mole_fractions[i];
-    double term = d_dalpha0oi_dxj + d_dalpha0oj_dxi + Kronecker_delta(i,j)/xi;
+    double xi = HEOS.mole_fractions[i], xj = HEOS.mole_fractions[j];
+    double Kronecker_delta_over_xi = (xj > DBL_EPSILON && xi > DBL_EPSILON) ? Kronecker_delta(i, j)/xi : 0;
+    double term = d_dalpha0oi_dxj + d_dalpha0oj_dxi + Kronecker_delta_over_xi;
     
     std::size_t kmax = HEOS.mole_fractions.size();
     if (xN_flag == XN_DEPENDENT){ kmax--; }
@@ -989,13 +992,14 @@ public:
                                                      HEOS_plus_tau, HEOS_minus_tau, HEOS_plus_delta, HEOS_minus_delta,
                                                      HEOS_plus_T__constp, HEOS_minus_T__constp, HEOS_plus_p__constT, HEOS_minus_p__constT,
                                                      HEOS_plus_T__constrho,HEOS_minus_T__constrho, HEOS_plus_rho__constT, HEOS_minus_rho__constT;
-    std::vector<shared_ptr<CoolProp::HelmholtzEOSMixtureBackend> > HEOS_plus_z, HEOS_minus_z, HEOS_plus_z__constTrho, HEOS_minus_z__constTrho, HEOS_plus_n, HEOS_minus_n;
+    std::vector<shared_ptr<CoolProp::HelmholtzEOSMixtureBackend> > HEOS_plus_z, HEOS_minus_z, HEOS_plus_z__constTrho, HEOS_minus_z__constTrho, HEOS_plus_n, HEOS_minus_n,
+                                                                   HEOS_plus_2z, HEOS_minus_2z, HEOS_plus_2z__constTrho, HEOS_minus_2z__constTrho;
     CoolProp::x_N_dependency_flag xN;
     double dtau, ddelta, dz, dn, tol, dT, drho, dp;
     DerivativeFixture() : xN(XN_INDEPENDENT) {
         dtau = 1e-6; ddelta = 1e-6; dz = 1e-6; dn = 1e-6; dT = 1e-3; drho = 1e-3; dp = 1; tol = 5e-6;
         std::vector<std::string> names; names.push_back("n-Pentane"); names.push_back("Ethane"); names.push_back("n-Propane"); names.push_back("n-Butane");
-        std::vector<CoolPropDbl> mole_fractions; mole_fractions.push_back(0.1); mole_fractions.push_back(0.2); mole_fractions.push_back(0.3); mole_fractions.push_back(0.4);
+        std::vector<CoolPropDbl> mole_fractions; mole_fractions.push_back(0.1); mole_fractions.push_back(0.0); mole_fractions.push_back(0.3); mole_fractions.push_back(0.6);
         HEOS.reset(new backend(names));
         HEOS->set_mole_fractions(mole_fractions);
         HEOS->specify_phase(CoolProp::iphase_gas);
@@ -1020,25 +1024,32 @@ public:
         
         // Varying mole fractions
         HEOS_plus_z.resize(4); HEOS_minus_z.resize(4); HEOS_plus_z__constTrho.resize(4); HEOS_minus_z__constTrho.resize(4);
+        HEOS_plus_2z.resize(4); HEOS_minus_2z.resize(4); HEOS_plus_2z__constTrho.resize(4); HEOS_minus_2z__constTrho.resize(4);
         for (int i = 0; i < HEOS_plus_z.size(); ++i){
             init_state(HEOS_plus_z[i]);
+            init_state(HEOS_plus_2z[i]);
             init_state(HEOS_plus_z__constTrho[i]);
-            std::vector<double> zz = HEOS->get_mole_fractions();
-            zz[i] += dz;
-            if (xN == CoolProp::XN_DEPENDENT){ zz[zz.size()-1] -= dz; }
+            std::vector<double> zz = HEOS->get_mole_fractions(), zz2 = HEOS->get_mole_fractions();
+            zz[i] += dz; zz2[i] += 2*dz;
+            if (xN == CoolProp::XN_DEPENDENT){ zz[zz.size()-1] -= dz; zz2[zz2.size()-1] -= 2*dz; }
             HEOS_plus_z[i]->set_mole_fractions(zz);
             HEOS_plus_z[i]->update(CoolProp::DmolarT_INPUTS, HEOS->delta()*HEOS_plus_z[i]->rhomolar_reducing(),  HEOS_plus_z[i]->T_reducing()/HEOS->tau());
+            HEOS_plus_2z[i]->set_mole_fractions(zz2);
+            HEOS_plus_2z[i]->update(CoolProp::DmolarT_INPUTS, HEOS->delta()*HEOS_plus_2z[i]->rhomolar_reducing(),  HEOS_plus_2z[i]->T_reducing()/HEOS->tau());
             HEOS_plus_z__constTrho[i]->set_mole_fractions(zz);
             HEOS_plus_z__constTrho[i]->update(CoolProp::DmolarT_INPUTS, HEOS->rhomolar(),  HEOS->T());
         }
         for (int i = 0; i < HEOS_minus_z.size(); ++i){
             init_state(HEOS_minus_z[i]);
+            init_state(HEOS_minus_2z[i]);
             init_state(HEOS_minus_z__constTrho[i]);
-            std::vector<double> zz = HEOS->get_mole_fractions();
-            zz[i] -= dz;
-            if (xN == CoolProp::XN_DEPENDENT){ zz[zz.size()-1] += dz; }
+            std::vector<double> zz = HEOS->get_mole_fractions(), zz2 = HEOS->get_mole_fractions();
+            zz[i] -= dz; zz2[i] -= 2*dz;
+            if (xN == CoolProp::XN_DEPENDENT){ zz[zz.size()-1] += dz; zz2[zz2.size()-1] += 2*dz; }
             HEOS_minus_z[i]->set_mole_fractions(zz);
             HEOS_minus_z[i]->update(CoolProp::DmolarT_INPUTS, HEOS->delta()*HEOS_minus_z[i]->rhomolar_reducing(),  HEOS_minus_z[i]->T_reducing()/HEOS->tau());
+            HEOS_minus_2z[i]->set_mole_fractions(zz2);
+            HEOS_minus_2z[i]->update(CoolProp::DmolarT_INPUTS, HEOS->delta()*HEOS_minus_2z[i]->rhomolar_reducing(),  HEOS_minus_2z[i]->T_reducing()/HEOS->tau());
             HEOS_minus_z__constTrho[i]->set_mole_fractions(zz);
             HEOS_minus_z__constTrho[i]->update(CoolProp::DmolarT_INPUTS, HEOS->rhomolar(),  HEOS->T());
         }
@@ -1101,12 +1112,14 @@ public:
                 numeric = (g(*HEOS_plus_p__constT, i, xN) - g(*HEOS_minus_p__constT, i, xN))/(2*dp);
             }
             else if (wrt == T_CONSTRHO){
-                numeric = (g(*HEOS_plus_T__constrho, i, xN) - g(*HEOS_minus_T__constrho, i, xN))/(2*dT);
+                double g1 = g(*HEOS_plus_T__constrho, i, xN), g2 = g(*HEOS_minus_T__constrho, i, xN);
+                numeric = (g1 - g2)/(2*dT);
             }
             else if (wrt == RHO_CONSTT){
                 numeric = (g(*HEOS_plus_rho__constT, i, xN) - g(*HEOS_minus_rho__constT, i, xN))/(2*drho);
             }
             CAPTURE(name);
+            CAPTURE(i);
             CAPTURE(analytic)
             CAPTURE(numeric);
             CAPTURE(xN);
@@ -1117,24 +1130,29 @@ public:
     };
     void one_comp(const std::string &name, one_mole_fraction_pointer f, zero_mole_fraction_pointer g, derivative wrt = CONST_TAU_DELTA){
         for (int i = 0; i < 4; ++i){
-                double analytic;
-                CHECK_NOTHROW(analytic = f(*HEOS, i, xN););
-                double numeric = -10000;
-                if (wrt == CONST_TAU_DELTA){
+            double analytic;
+            CHECK_NOTHROW(analytic = f(*HEOS, i, xN););
+            double numeric = -10000;
+            if (wrt == CONST_TAU_DELTA){
+                if (HEOS->get_mole_fractions()[i] > dz){
                     CHECK_NOTHROW(numeric = (g(*HEOS_plus_z[i], xN) - g(*HEOS_minus_z[i], xN))/(2*dz););
                 }
-                else if (wrt == CONST_TRHO){
-                    CHECK_NOTHROW(numeric = (g(*HEOS_plus_z__constTrho[i], xN) - g(*HEOS_minus_z__constTrho[i], xN))/(2*dz););
+                else{
+                    CHECK_NOTHROW(numeric = (-3*g(*HEOS, xN) + 4*g(*HEOS_plus_z[i], xN) - g(*HEOS_plus_2z[i], xN))/(2*dz););
                 }
-            
-                CAPTURE(name);
-                CAPTURE(i);
-                CAPTURE(analytic)
-                CAPTURE(numeric);
-                CAPTURE(xN);
-                double error = mix_deriv_err_func(numeric, analytic);
-                CAPTURE(error);
-                CHECK(error < tol);
+            }
+            else if (wrt == CONST_TRHO){
+                CHECK_NOTHROW(numeric = (g(*HEOS_plus_z__constTrho[i], xN) - g(*HEOS_minus_z__constTrho[i], xN))/(2*dz););
+            }
+        
+            CAPTURE(name);
+            CAPTURE(i);
+            CAPTURE(analytic)
+            CAPTURE(numeric);
+            CAPTURE(xN);
+            double error = mix_deriv_err_func(numeric, analytic);
+            CAPTURE(error);
+            CHECK(error < tol);
         }
     }
     void two(const std::string &name, two_mole_fraction_pointer f, two_mole_fraction_pointer g = NULL, derivative wrt = NO_DERIV){
@@ -1167,7 +1185,15 @@ public:
         for (int i = 0; i < 4; ++i){
             for (int j = 0; j < 4; ++j){
                 double analytic = f(*HEOS, i, j, xN);
-                double numeric = (g(*HEOS_plus_z[j], i, xN) - g(*HEOS_minus_z[j], i, xN))/(2*dz);
+                double numeric = 500;
+                if (HEOS->get_mole_fractions()[j] > 2*dz){
+                    // Second order centered difference in composition
+                    CHECK_NOTHROW(numeric = (g(*HEOS_plus_z[j], i, xN) - g(*HEOS_minus_z[j], i, xN))/(2*dz););
+                }
+                else{
+                    // Forward difference in composition
+                    CHECK_NOTHROW(numeric = (-3*g(*HEOS, i, xN) + 4*g(*HEOS_plus_z[j], i, xN) - g(*HEOS_plus_2z[j], i, xN))/(2*dz););
+                }
                 CAPTURE(name);
                 CAPTURE(i);
                 CAPTURE(j);
@@ -1210,10 +1236,17 @@ public:
             for (int j = 0; j < 4; ++j){
                 for (int k = 0; k < 4; ++k){
                     double analytic = f(*HEOS, i, j, k, xN);
-                    double numeric = (g(*HEOS_plus_z[k], i, j, xN) - g(*HEOS_minus_z[k], i, j, xN))/(2*dz);
+                    double numeric;
+                    if (HEOS->get_mole_fractions()[i] > 2*dz){
+                        CHECK_NOTHROW(numeric = (g(*HEOS_plus_z[k], i, j, xN) - g(*HEOS_minus_z[k], i, j, xN))/(2*dz););
+                    }
+                    else{
+                        CHECK_NOTHROW(numeric = (-3*g(*HEOS, i, j, xN) + 4*g(*HEOS_plus_z[k], i, j, xN) - g(*HEOS_plus_2z[k], i, j, xN))/(2*dz););
+                    }
                     CAPTURE(name);
                     CAPTURE(i);
                     CAPTURE(j);
+                    CAPTURE(k);
                     CAPTURE(analytic)
                     CAPTURE(numeric);
                     CAPTURE(xN);
@@ -1293,6 +1326,21 @@ public:
         zero("dalphar_dTau", MD::dalphar_dTau, MD::alphar, TAU);
         zero("d2alphar_dTau2", MD::d2alphar_dTau2, MD::dalphar_dTau, TAU);
         
+        zero("dalpha0_dDelta", MD::dalpha0_dDelta, MD::alpha0, DELTA);
+        zero("d2alpha0_dDelta2", MD::d2alpha0_dDelta2, MD::dalpha0_dDelta, DELTA);
+        zero("dalpha0_dTau", MD::dalpha0_dTau, MD::alpha0, TAU);
+        zero("d2alpha0_dTau2", MD::d2alpha0_dTau2, MD::dalpha0_dTau, TAU);
+        
+        one_comp("dalpha0_dxi",MD::dalpha0_dxi, MD::alpha0);
+        one("d2alpha0_dxi_dDelta", MD::d2alpha0_dxi_dDelta, MD::dalpha0_dxi, DELTA);
+        one("d2alpha0_dxi_dTau", MD::d2alpha0_dxi_dTau, MD::dalpha0_dxi, TAU);
+        two_comp("d2alpha0dxidxj",MD::d2alpha0dxidxj, MD::dalpha0_dxi);
+        
+        one_comp("dalpha_dxi",MD::dalpha_dxi, MD::alpha);
+        one("d2alpha_dxi_dDelta", MD::d2alpha_dxi_dDelta, MD::dalpha_dxi, DELTA);
+        one("d2alpha_dxi_dTau", MD::d2alpha_dxi_dTau, MD::dalpha_dxi, TAU);
+        two_comp("d2alphadxidxj",MD::d2alphadxidxj, MD::dalpha_dxi);
+        
         zero("dpsi_dDelta", MD::dpsi_dDelta, MD::psi, DELTA);
         zero("dpsi_dTau", MD::dpsi_dTau, MD::psi, TAU);
         zero("d2psi_dDelta2", MD::d2psi_dDelta2, MD::dpsi_dDelta, DELTA);
@@ -1304,16 +1352,6 @@ public:
         two_comp("d2psi_dxi_dxj",MD::d2psi_dxi_dxj, MD::dpsi_dxi);
 
         //two_comp("d_ndalphardni_dxj__constT_V_xi", MD::d_ndalphardni_dxj__constT_V_xi, MD::ndalphar_dni__constT_V_nj);
-        
-        one_comp("dalpha0_dxi",MD::dalpha0_dxi, MD::alpha0);
-        one("d2alpha0_dxi_dDelta", MD::d2alpha0_dxi_dDelta, MD::dalpha0_dxi, DELTA);
-        one("d2alpha0_dxi_dTau", MD::d2alpha0_dxi_dTau, MD::dalpha0_dxi, TAU);
-        two_comp("d2alpha0dxidxj",MD::d2alpha0dxidxj, MD::dalpha0_dxi);
-        
-        one_comp("dalpha_dxi",MD::dalpha_dxi, MD::alpha);
-        one("d2alpha_dxi_dDelta", MD::d2alpha_dxi_dDelta, MD::dalpha_dxi, DELTA);
-        one("d2alpha_dxi_dTau", MD::d2alpha_dxi_dTau, MD::dalpha_dxi, TAU);
-        two_comp("d2alphadxidxj",MD::d2alphadxidxj, MD::dalpha_dxi);
 
         one_comp("dalphar_dxi",MD::dalphar_dxi, MD::alphar);
         two_comp("d2alphardxidxj",MD::d2alphardxidxj, MD::dalphar_dxi);
@@ -1380,6 +1418,8 @@ public:
         two("d2_ndtaudni_dxj_dTau__constdelta", MD::d2_ndtaudni_dxj_dTau__constdelta, MD::d_ndtaudni_dxj__constdelta_tau, TAU);
         
         one_comp("dTrdxi__constxj", MD::dTrdxi__constxj, MD::Tr);
+        one_comp("d2Tr_dxidbetaT", MD::d2Tr_dxidbetaT, MD::dTr_dbetaT);
+        one_comp("d2Tr_dxidgammaT", MD::d2Tr_dxidgammaT, MD::dTr_dgammaT);
         // (??)two_comp("d2Trdxi2__constxj", MD::d2Trdxi2__constxj, MD::dTrdxi__constxj);
         two_comp("d2Trdxidxj", MD::d2Trdxidxj, MD::dTrdxi__constxj);
         three_comp("d3Trdxidxjdxk", MD::d3Trdxidxjdxk, MD::d2Trdxidxj);
@@ -1388,6 +1428,8 @@ public:
         three_comp("d2_ndTrdni_dxj_dxk__constxi", MD::d2_ndTrdni_dxj_dxk__constxi, MD::d_ndTrdni_dxj__constxi);
         
         one_comp("drhormolardxi__constxj", MD::drhormolardxi__constxj, MD::rhormolar);
+        one_comp("d2rhormolar_dxidbetaV", MD::d2rhormolar_dxidbetaV, MD::drhormolar_dbetaV);
+        one_comp("d2rhormolar_dxidgammaV", MD::d2rhormolar_dxidgammaV, MD::drhormolar_dgammaV);
         // (??) two_comp("d2rhormolardxi2__constxj", MD::d2rhormolardxi2__constxj, MD::drhormolardxi__constxj);
         two_comp("d2rhormolardxidxj", MD::d2rhormolardxidxj, MD::drhormolardxi__constxj);
         three_comp("d3rhormolardxidxjdxk", MD::d3rhormolardxidxjdxk, MD::d2rhormolardxidxj);

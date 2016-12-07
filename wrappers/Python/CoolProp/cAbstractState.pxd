@@ -25,6 +25,9 @@ cdef extern from "AbstractState.h" namespace "CoolProp":
         double rhomolar_liq, rhomolar_vap
         double _rhomolar_liq, _rhomolar_vap
         vector[double] x, y
+
+    cdef cppclass SpinodalData:
+        vector[double] tau, delta, M1
         
     cdef cppclass AbstractState:
         
@@ -53,6 +56,7 @@ cdef extern from "AbstractState.h" namespace "CoolProp":
         void set_binary_interaction_string(const string &, const string &, const string &, const string &) except +ValueError
         double get_binary_interaction_double(const string &, const string &, const string &) except +ValueError
         string get_binary_interaction_string(const string &, const string &, const string &) except +ValueError
+        void set_binary_interaction_string(const size_t, const size_t, const string &, const string &) except +ValueError
         void apply_simple_mixing_rule(size_t, size_t, const string &) except +ValueError
         
         double get_binary_interaction_double(const size_t, const size_t, const string &) except +ValueError
@@ -78,6 +82,10 @@ cdef extern from "AbstractState.h" namespace "CoolProp":
         double p_critical() except +ValueError
         vector[CriticalState] all_critical_points() except +ValueError
         void criticality_contour_values(double &L1star, double &M1star) except +ValueError
+
+        ## Spinodal curve
+        void build_spinodal() except +ValueError
+        SpinodalData get_spinodal_data() except +ValueError
         
         ## Tangent plane analysis
         double tangent_plane_distance(const double, const double, const vector[double], const double) except +ValueError

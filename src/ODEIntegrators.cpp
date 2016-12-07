@@ -9,7 +9,7 @@ bool ODEIntegrators::AdaptiveRK54(AbstractODEIntegrator &ode, double tmin, doubl
 {
     // Get the starting array of variables of integration
     std::vector<double> xold = ode.get_initial_array();
-    const long N = xold.size();
+    const long N = static_cast<long>(xold.size());
     
     // Start at an index of 0
     int Itheta = 0;
@@ -114,7 +114,7 @@ bool ODEIntegrators::AdaptiveRK54(AbstractODEIntegrator &ode, double tmin, doubl
                 }
             }
             else{
-                printf("accepted");
+                std::cout << format("accepted");
             }
         }
         
@@ -177,7 +177,7 @@ TEST_CASE("Integrate y'=y","[ODEIntegrator]")
     double yfinal_integration = simple.y[simple.y.size()-1];
     double tfinal_integration = simple.t[simple.t.size()-1];
     
-    double yfinal_analytic = exp(4);
+    double yfinal_analytic = exp(4.0);
     double error = yfinal_integration/yfinal_analytic-1;
 
     CAPTURE(yfinal_analytic);

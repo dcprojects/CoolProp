@@ -7,6 +7,7 @@
 #include "PhaseEnvelope.h"
 #include "CoolPropTools.h"
 #include "Configuration.h"
+#include "CPnumerics.h"
 
 namespace CoolProp{
 
@@ -205,8 +206,11 @@ void PhaseEnvelopeRoutines::build(HelmholtzEOSMixtureBackend &HEOS, const std::s
             }
             else if (iter - iter0 > 3)
             {
-                IO.T = CubicInterp(env.rhomolar_vap, env.T, iter-4, iter-3, iter-2, iter-1, IO.rhomolar_vap);
-                IO.rhomolar_liq = CubicInterp(env.rhomolar_vap, env.rhomolar_liq, iter-4, iter-3, iter-2, iter-1, IO.rhomolar_vap);
+                // Use the spline interpolation class of Devin Lane: http://shiftedbits.org/2011/01/30/cubic-spline-interpolation/
+                Spline<double,double> spl_T(env.rhomolar_vap, env.T);
+                IO.T = spl_T.interpolate(IO.rhomolar_vap);
+                Spline<double,double> spl_rho(env.rhomolar_vap, env.rhomolar_liq);
+                IO.rhomolar_liq = spl_rho.interpolate(IO.rhomolar_vap);
                 
                 // Check if there is a large deviation from linear interpolation - this suggests a step size that is so large that a minima or maxima of the interpolation function is crossed
                 CoolPropDbl T_linear = LinearInterp(env.rhomolar_vap, env.T, iter-2, iter-1, IO.rhomolar_vap);
@@ -219,7 +223,10 @@ void PhaseEnvelopeRoutines::build(HelmholtzEOSMixtureBackend &HEOS, const std::s
                 }
                 for (std::size_t i = 0; i < IO.x.size()-1; ++i) // First N-1 elements
                 {
-                    IO.x[i] = CubicInterp(env.rhomolar_vap, env.x[i], iter-4, iter-3, iter-2, iter-1, IO.rhomolar_vap);
+                    // Use the spline interpolation class of Devin Lane: http://shiftedbits.org/2011/01/30/cubic-spline-interpolation/
+                    Spline<double,double> spl(env.rhomolar_vap, env.x[i]);
+                    IO.x[i] = spl.interpolate(IO.rhomolar_vap);
+                    
                     if (IO.x[i] < 0 || IO.x[i] > 1){
                         // Try again, but with a smaller step
                         IO.rhomolar_vap /= factor;
@@ -260,6 +267,7 @@ void PhaseEnvelopeRoutines::build(HelmholtzEOSMixtureBackend &HEOS, const std::s
                 //std::cout << IO.T << " " << IO.p << std::endl;
                 // Try again, but with a smaller step
                 IO.rhomolar_vap /= factor;
+                if (iter < 4){ throw ValueError(format("Unable to calculate at least 4 points in phase envelope; quitting")); }
                 IO.rhomolar_liq = QuadInterp(env.rhomolar_vap, env.rhomolar_liq, iter-3, iter-2, iter-1, IO.rhomolar_vap);
                 factor = 1 + (factor-1)/2;
                 failure_count++;
@@ -647,8 +655,8 @@ bool PhaseEnvelopeRoutines::is_inside(const PhaseEnvelopeData &env, parameters i
     
     // If number of intersections is 0, input is out of range, quit
     if (intersections.size() == 0){ 
-        throw ValueError(format("Input is out of range for primary value [%Lg], inputs were (%d,%Lg,%d,%Lg); no intersections found", 
-            value1, get_parameter_information(iInput1,"short"), value1, get_parameter_information(iInput2,"short"), value2
+        throw ValueError(format("Input is out of range for primary value [%Lg], inputs were (%s,%Lg,%s,%Lg); no intersections found", 
+            value1, get_parameter_information(iInput1,"short").c_str(), value1, get_parameter_information(iInput2,"short").c_str(), value2
             )); 
     }
     

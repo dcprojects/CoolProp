@@ -106,21 +106,31 @@ public:
 
 /// Get a conversion factor from mass to molar if needed
 inline void mass_to_molar(parameters &param, double &conversion_factor, double molar_mass){
-    switch(param){
+    conversion_factor = 1.0;
+    switch (param){
         case iDmass: conversion_factor = molar_mass; param = iDmolar; break;
-        case iHmass: conversion_factor = 1/molar_mass; param = iHmolar; break;
-        case iSmass: conversion_factor = 1/molar_mass; param = iSmolar; break;
-        case iUmass: conversion_factor = 1/molar_mass; param = iUmolar; break;
+        case iHmass: conversion_factor /= molar_mass; param = iHmolar; break;
+        case iSmass: conversion_factor /= molar_mass; param = iSmolar; break;
+        case iUmass: conversion_factor /= molar_mass; param = iUmolar; break;
+        case iCvmass: conversion_factor /= molar_mass; param = iCvmolar; break;
+        case iCpmass: conversion_factor /= molar_mass; param = iCpmolar; break;
         case iDmolar:
         case iHmolar:
         case iSmolar:
         case iUmolar:
+        case iCvmolar:
+        case iCpmolar:
         case iT:
         case iP:
+        case ispeed_sound:
+        case iisothermal_compressibility:
+        case iisobaric_expansion_coefficient:
+        case iviscosity:
+        case iconductivity:
             return;
         default:
-            throw ValueError("I don't know how to convert this parameter");
-    }
+            throw ValueError("TabularBackends::mass_to_molar - I don't know how to convert this parameter");
+        }
 }
 
 /** \brief This class holds the data for a two-phase table that is log spaced in p
@@ -1023,6 +1033,9 @@ class TabularBackend : public AbstractState
         CoolPropDbl calc_first_saturation_deriv(parameters Of1, parameters Wrt1);
         CoolPropDbl calc_first_two_phase_deriv(parameters Of, parameters Wrt, parameters Constant);
 
+		/// If you need all three values (drho_dh__p, drho_dp__h and rho_spline), you should calculate drho_dp__h first to avoid duplicate calculations.
+		CoolPropDbl calc_first_two_phase_deriv_splined(parameters Of, parameters Wrt, parameters Constant, CoolPropDbl x_end);
+		
         void check_tables(){
             if (!tables_loaded){
                 try{
